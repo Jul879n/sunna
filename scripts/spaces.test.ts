@@ -14,7 +14,7 @@ function harness(replies: unknown[] = [], storage = new Map<string, string>(), s
   const availability = [{ name: null as string | null, layout: "ready" }];
   const moves: { id: string; index: number }[] = [];
   const handlers: Record<string, (...args: any[]) => void> = {};
-  const env = { layout: null as unknown, agents: [] as any[] };
+  const env = { layout: null as unknown, agents: [] as any[], shared: {} as Record<string, unknown>, stored: [] as [string, unknown][] };
   // The list's scroll position: the requests the view makes are what the sidebar would scroll by.
   const ScrollHandle = { new: () => ({ calls: [] as number[], scroll_to_item(index: number) { this.calls.push(index); } }) };
   const theme = () => new Proxy({}, { get: () => "#000000" });
@@ -38,8 +38,8 @@ function harness(replies: unknown[] = [], storage = new Map<string, string>(), s
       expect(name).toBe("space.move");
       moves.push(args);
     },
-    ...Array(4).fill(() => element), () => null, () => availability, execGit, () => ({ active: true }), watch,
-    ScrollHandle, theme, () => env.layout, () => {}, tr, () => ({ radius: 6 }),
+    ...Array(4).fill(() => element), (key: string) => env.shared[key] ?? null, () => availability, execGit, () => ({ active: true }), watch,
+    ScrollHandle, theme, () => env.layout, (key: string, value: unknown) => { env.stored.push([key, value]); env.shared[key] = value; }, tr, () => ({ radius: 6 }),
     () => element, () => env.agents, () => "/home", async () => null, async () => [], () => null,
   );
   const view = new Spaces();
@@ -510,7 +510,8 @@ test("the narrow rail reveals the same child", () => {
   const h = withHandle(scrollHarness(spaceList(["a", "b", "c"], "c")));
   h.env.layout = { id: "sidebar", size: { px: 100 } };
   h.view.render();
-  expect(h.view.scroll.calls).toEqual([2]);
+  // Each space is its own project here: a tile and a cell per space, so c's cell is the sixth child.
+  expect(h.view.scroll.calls).toEqual([5]);
 });
 
 test("the list reveals the active space again when its own size changes, and only then", () => {
@@ -563,5 +564,31 @@ test("a space with agents draws its row with its agents under it, in a project",
   const out = h.view.projects([mk("a", "r1"), mk("b", "r1"), mk("c", "r2", true)], t, false, () => null);
   expect(out.items).toHaveLength(5);
   expect(out.active).toBe(4);
-  expect(h.view.projects([mk("a", "r1", true)], t, true, () => "x").active).toBe(0);
+  // The rail puts a project tile before its spaces, so the active cell is the second.
+  expect(h.view.projects([mk("a", "r1", true)], t, true, () => "x").active).toBe(1);
+});
+
+test("a hidden project leaves the list but never the one with the active space, and can be shown again", () => {
+  const h = harness();
+  const t = new Proxy({}, { get: () => "#000000" });
+  const mk = (id: string, repo: string, active = false) => ({ w: { id, name: id, folder: `/x/${repo}`, active, tabs: [] }, i: 0, g: { repo, name: repo }, tree: null });
+  const rows = [mk("a", "r1"), mk("b", "r2")];
+  expect(h.view.projects(rows, t, false, () => null).items).toHaveLength(4);
+  h.env.shared["space.hidden"] = ["r1"];
+  // r2 stays (2 items) and the hidden section adds its toggle (collapsed).
+  expect(h.view.projects(rows, t, false, () => null).items).toHaveLength(3);
+  h.view.hiddenOpen = true;
+  expect(h.view.projects(rows, t, false, () => null).items).toHaveLength(4);
+  // The project holding the active space is not hidden.
+  expect(h.view.projects([mk("a", "r1", true), mk("b", "r2")], t, false, () => null).items).toHaveLength(4);
+});
+
+test("the rail shows a tile per project and leaves out hidden ones", () => {
+  const h = harness();
+  const t = new Proxy({}, { get: () => "#000000" });
+  const mk = (id: string, repo: string, active = false) => ({ w: { id, name: id, folder: `/x/${repo}`, active, tabs: [] }, i: 0, g: { repo, name: repo }, tree: null });
+  const rows = [mk("a", "r1"), mk("b", "r1"), mk("c", "r2")];
+  expect(h.view.projects(rows, t, true, () => "cell").items).toHaveLength(5);
+  h.env.shared["space.hidden"] = ["r1"];
+  expect(h.view.projects(rows, t, true, () => "cell").items).toHaveLength(2);
 });

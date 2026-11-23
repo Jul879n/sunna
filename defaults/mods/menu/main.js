@@ -5,7 +5,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { run, props, closeOverlay, openOverlay, theme, keys, terminals, spaces, panes, exec, tr, style } from "herdr";
+import { run, props, closeOverlay, openOverlay, theme, keys, terminals, spaces, panes, exec, tr, style, window, shared, setShared } from "herdr";
 
 // Radius scale: the theme's `style.radius` (6 = the original sizes).
 const R = (n) => Math.round(n * style().radius / 6);
@@ -70,6 +70,13 @@ function items(p, git) {
         ...(git === "linked" ? [[tr("menu.remove_worktree"), "worktree", { space: tg.id, action: "remove" }]] : []),
         [tr("menu.close"), "space.close", { id: tg.id }],
       ];
+    case "project":
+      return [
+        ...(tg.repo ? [[tr("menu.new_worktree"), "worktree", { space: tg.id, folder: tg.folder, action: "new" }]] : []),
+        ...(tg.machine ? [] : [[tr("menu.reveal_folder"), "reveal", { folder: tg.folder }]]),
+        [tr("menu.copy_path"), "copy", { text: tg.folder }],
+        [tr("menu.hide_project"), "hide", { key: tg.key }],
+      ];
     default:
       return [
         [tr("menu.new_space"), "space.new", {}],
@@ -83,7 +90,7 @@ function items(p, git) {
 }
 
 function menuIcon(command) {
-  const name = command.endsWith(".close") ? "x" : command.endsWith(".rename") ? "square-pen" : command.endsWith(".new") ? "plus" : command === "worktree" ? "git-branch" : command === "app.help" ? "terminal" : command === "app.theme" ? "settings" : command === "pane.split" ? "panel-right" : command === "pane.zoom" ? "square" : "terminal";
+  const name = command.endsWith(".close") ? "x" : command.endsWith(".rename") ? "square-pen" : command.endsWith(".new") ? "plus" : command === "worktree" ? "git-branch" : command === "reveal" ? "folder" : command === "copy" ? "files" : command === "hide" ? "minus" : command === "app.help" ? "terminal" : command === "app.theme" ? "settings" : command === "pane.split" ? "panel-right" : command === "pane.zoom" ? "square" : "terminal";
   return `mods/workspace-chrome/${name}.svg`;
 }
 
@@ -116,6 +123,11 @@ export default class Menu extends View {
     if (!it) return;
     closeOverlay(props()?.overlay);
     if (it[1] === "worktree") openOverlay({ mod: "worktree", kind: "dialog", ...(it[2].action === "open" ? { width: 560, height: 480 } : { width: 440, height: 260 }), props: it[2] });
+    else if (it[1] === "reveal") {
+      const os = window().platform;
+      exec(os === "macos" ? "open" : os === "windows" ? "explorer" : "xdg-open", [it[2].folder]).catch(() => {});
+    } else if (it[1] === "copy") cx.write_to_clipboard(it[2].text);
+    else if (it[1] === "hide") setShared("space.hidden", [...new Set([...(shared("space.hidden") ?? []), it[2].key])]);
     else run(it[1], it[2]);
   }
 

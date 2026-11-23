@@ -110,6 +110,18 @@ Mod pane props are stored as given, never machine-qualified. Space order is loca
 machine first, then machines by name; `space.move` stays inside its machine's block.
 In the expanded Spaces sidebar, drag a space to reorder it within its machine;
 the highlighted line shows where it will land.
+Right-click a project header for its menu (new worktree in a repo, show in the
+file manager on this machine, copy path, hide). Hidden projects leave the list
+and sit under a folded "Hidden projects" row with Show; the project holding the
+active space is never hidden. The hidden keys are `shared("space.hidden")`.
+A project's tile shows the icon the repo ships (the first of `assets/icon.png`,
+`icon.png`, `logo.svg`, `public/favicon.png`, and similar, local folders only),
+copied into `project-icons/` in the home; without one it is the first letter.
+The narrow rail draws a tile per project (a dot when an agent works or is
+blocked, right-click for the project menu) with its spaces' cells under it, and
+a search button above the list.
+The `add-project` mod opens from the Projects `+`: browse a folder, clone from a
+URL, or create a new project (`git init`), and opens it as a space.
 
 - A **space** is a place to work, on one machine: this one, or another
   from `hc machine ls` (`spaces()[i].machine`). Herdr leaves out machines

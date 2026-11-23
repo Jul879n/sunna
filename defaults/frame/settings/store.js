@@ -119,6 +119,24 @@ export async function catalog(kind) {
   return items;
 }
 
+/** Whether a GitHub repo holds something `scanSource` can install (true/false), or null when GitHub could not say. */
+export async function compatible(fullName) {
+  const path = `repos/${fullName}/git/trees/HEAD?recursive=1`;
+  let data = null;
+  try {
+    const r = await fetch(`https://api.github.com/${path}`, { headers: { Accept: "application/vnd.github+json" } });
+    if (r.status === 200) data = await r.json();
+  } catch {}
+  if (!data) {
+    try {
+      const r = await exec("gh", ["api", path]);
+      if (r.code === 0) data = JSON.parse(r.stdout);
+    } catch {}
+  }
+  if (!data || !Array.isArray(data.tree)) return null;
+  return data.tree.some((n) => /^(main\.js|mods\/[^/]+\/main\.js|themes\/[^/]+\.json|layouts\/[^/]+\.json)$/.test(n.path));
+}
+
 /** "3 days ago"-style age of an ISO date, in days (the card shows a short phrase). */
 export function ageDays(iso, now = Date.now()) {
   const t = Date.parse(iso);

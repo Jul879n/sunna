@@ -31,6 +31,8 @@ function place(s, ps) {
 }
 const rowHeight = () => 30;
 const RAIL_CELL = 32;
+// Where a repo usually keeps its icon (png or svg: what the image loader reads), most specific first.
+const ICON_FILES = ["assets/icon.png", "assets/images/icon.png", "assets/logo.png", "assets/logo.svg", "assets/icons/icon.png", "icon.png", "icon.svg", "logo.png", "logo.svg", "app/icon.png", "app/icon.svg", "src/app/icon.png", "src/app/icon.svg", "public/icon.png", "public/icon.svg", "public/logo.png", "public/logo.svg", "public/favicon.png", "public/favicon.svg", "static/favicon.png", "static/favicon.svg", "favicon.png", "favicon.svg", "build/icon.png", "resources/icon.png", "src-tauri/icons/128x128.png", "docs/logo.png", "docs/logo.svg", ".github/logo.png", ".github/logo.svg"];
 const railCell = (el) => h_flex().flex_none().justify_center().child(el);
 const where = (s, ps) => JSON.stringify([s.machine ?? null, place(s, ps)]);
 // "now", "5m", "3h", "13d": how long ago a tab last changed.
@@ -76,6 +78,8 @@ export function tone(t, status) {
 
 export default class Spaces extends View {
   init(_props, cx) {
+    this.cx = cx;
+    this.icons = {}; // project key -> its icon file in project-icons/, null: none (or still looking)
     this.git = {}; // where() -> { name, branch, ahead, behind, repo, linked }, null: not a repo
     this.checked = {}; // where() -> when it was last looked at
     this.unsure = new Set(); // where()s git couldn't answer for (a machine away)
@@ -537,9 +541,32 @@ export default class Spaces extends View {
           .child(div().flex_1().min_w(0).truncate().child(b.name)))));
   }
 
+  // A project's own icon: the first app icon or logo the repo ships, copied to project-icons/ (once per project, local only).
+  projectIcon(key, folder, machine) {
+    this.icons ??= {};
+    if (key in this.icons || machine || !folder || !this.cx || window().platform === "windows") return this.icons[key] ?? null;
+    this.icons[key] = null;
+    const out = `${appHome()}/project-icons`, name = key.replace(/[^\w.-]+/g, "_").slice(-80);
+    const script = `for f in ${ICON_FILES.join(" ")}; do if [ -f "$f" ]; then ext="\${f##*.}"; mkdir -p "$1" && cp "$f" "$1/$2.$ext" && echo "$2.$ext"; exit 0; fi; done`;
+    this.cx.spawn(async (cx) => {
+      try {
+        const r = await exec("sh", ["-c", script, "sh", out, name], { cwd: folder, timeout: 5000 });
+        const file = r.code === 0 ? r.stdout.trim() : "";
+        if (file) { this.icons[key] = file; cx.notify(); }
+      } catch {}
+    });
+    return null;
+  }
+
+  // The project's tile: its icon when the repo has one, else its first letter on its colour.
+  projectTile(key, label, fill, size, folder, machine) {
+    const icon = this.projectIcon(key, folder, machine);
+    if (icon) return div().size(size).flex_none().rounded(R(5)).overflow_hidden().child(image(`project-icons/${icon}`).size(size));
+    return h_flex().size(size).flex_none().rounded(R(5)).bg(fill).items_center().justify_center().text_size(size * 0.58).font_bold().text_color("#ffffff").child([...label][0]?.toUpperCase() ?? "?");
+  }
+
   // Projects: a bold header per repo (or folder), its spaces under it, each with its agents listed below.
   projects(rows, t, collapsed, draw) {
-    if (collapsed) return { items: rows.map(draw), active: rows.findIndex((r) => r.w.active) };
     const groups = new Map();
     for (const r of rows) {
       const key = r.g?.repo ?? `folder:${r.w.folder || r.w.name}`;
@@ -549,17 +576,61 @@ export default class Spaces extends View {
     const items = [];
     let active = -1;
     const colors = shared("space.colors") ?? {};
+    // A hidden project leaves the list, never the one you are in.
+    const hiddenKeys = shared("space.hidden") ?? [];
+    const hidden = [];
+    for (const [key, grp] of groups) if (hiddenKeys.includes(key) && !grp.rows.some((r) => r.w.active)) { hidden.push([key, grp]); groups.delete(key); }
+    if (collapsed) {
+      // The rail: one tile per project (its icon, a dot for its agents), its spaces' cells under it.
+      const live = agents();
+      for (const [key, grp] of groups) {
+        const lead = grp.rows[0].w, ids = new Set(grp.rows.map((r) => r.w.id));
+        const mine = live.filter((a) => ids.has(a.space));
+        const state = mine.some((a) => a.status === "blocked") ? "blocked" : mine.some((a) => a.status === "working") ? "working" : null;
+        const color = colors[lead.id] ?? "ansi6";
+        const fill = color.startsWith("#") ? color : (MARK[color] ?? t[color]);
+        items.push(railCell(div().id(`rail-project-${key}`).relative().size(24).mt(6).flex_none().cursor_pointer().tooltip(grp.label)
+          .on_mouse_down("right", () => openOverlay({ mod: "menu", kind: "popup", at: "pointer", width: 200, height: 150, props: { tab: "project", target: { id: lead.id, key, folder: lead.folder, machine: lead.machine ?? null, repo: Boolean(grp.rows[0].g?.repo) } } }))
+          .on_click(() => run("space.select", { id: (grp.rows.find((r) => r.w.active) ?? grp.rows[0]).w.id }))
+          .child(this.projectTile(key, grp.label, fill, 24, lead.folder, lead.machine))
+          .when(state !== null, (el) => el.child(div().absolute().right(-2).top(-2).size(8).rounded_full().border_1().border_color(t.chrome).bg(state === "blocked" ? t.blocked : t.working)))));
+        for (const r of grp.rows) {
+          if (r.w.active) active = items.length;
+          items.push(draw(r));
+        }
+      }
+      return { items, active };
+    }
     for (const [key, grp] of groups) {
       const lead = grp.rows[0].w;
       const color = colors[lead.id] ?? "ansi6";
       const fill = color.startsWith("#") ? color : (MARK[color] ?? t[color]);
       items.push(h_flex().id(`project-${key}`).h(30).flex_none().px(8).mt(6).gap(9).items_center()
-        .child(h_flex().size(18).flex_none().rounded(R(5)).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...grp.label][0]?.toUpperCase() ?? "?"))
-        .child(div().flex_1().min_w(0).truncate().font_semibold().text_color(t.foreground).child(grp.label)));
+        .on_mouse_down("right", () => openOverlay({ mod: "menu", kind: "popup", at: "pointer", width: 200, height: 150, props: { tab: "project", target: { id: lead.id, key, folder: lead.folder, machine: lead.machine ?? null, repo: Boolean(grp.rows[0].g?.repo) } } }))
+        .child(this.projectTile(key, grp.label, fill, 18, lead.folder, lead.machine))
+        .child(div().flex_1().min_w(0).truncate().font_semibold().text_color(t.foreground).child(grp.label))
+        // A repo's project can start another worktree from here.
+        .when(Boolean(grp.rows[0].g?.repo), (el) => el.child(div().id(`project-worktree-${key}`).size(22).flex_none().flex().items_center().justify_center().rounded(R(6)).text_color(t.dim)
+          .hover((st) => st.bg(t.hover).text_color(t.foreground)).tooltip(tr("menu.new_worktree"))
+          .on_click(() => openOverlay({ mod: "worktree", kind: "dialog", width: 460, height: 280, props: { space: lead.id, folder: lead.folder, action: "new" } }))
+          .child(svg("mods/workspace-chrome/branch.svg").size(13)))));
       for (const r of grp.rows) {
         if (r.w.active) active = items.length;
         items.push(this.withAgents(r, t));
       }
+    }
+    if (hidden.length) {
+      const open = this.hiddenOpen === true;
+      items.push(h_flex().id("hidden-projects").h(28).flex_none().px(8).mt(8).gap(6).items_center().cursor_pointer().text_size(12).text_color(t.dim)
+        .hover((st) => st.text_color(t.foreground))
+        .on_click((_e, cx) => { this.hiddenOpen = !open; cx.notify(); })
+        .child(svg(open ? "mods/workspace-chrome/chevron-down.svg" : "mods/workspace-chrome/chevron-right.svg").size(12))
+        .child(div().child(`${tr("spaces.hidden_projects")} (${hidden.length})`)));
+      if (open) for (const [key, grp] of hidden)
+        items.push(h_flex().id(`hidden-${key}`).h(26).flex_none().pl(28).pr(8).gap(8).items_center().text_size(12).text_color(t.muted)
+          .child(div().flex_1().min_w(0).truncate().child(grp.label))
+          .child(div().id(`hidden-show-${key}`).px(8).h(20).flex().items_center().rounded(R(6)).cursor_pointer().text_color(t.dim).hover((st) => st.bg(t.hover).text_color(t.foreground))
+            .on_click(() => setShared("space.hidden", hiddenKeys.filter((k) => k !== key))).child(tr("spaces.show"))));
     }
     return { items, active };
   }
@@ -638,7 +709,9 @@ export default class Spaces extends View {
           .when(!collapsed, (el) => el.child(div().id("space-folder").size(26).flex_none().flex().items_center().justify_center().rounded(R(6)).hover(s => s.bg(t.hover).text_color(t.foreground))
             .tooltip(tr("folders.open")).on_click(() => run("mod.open", { name: "folders" })).child(svg("mods/workspace-chrome/folder-plus.svg").size(14))))
           .child(div().id("space-new").size(26).flex_none().flex().items_center().justify_center().rounded(R(6)).hover(s => s.bg(t.hover).text_color(t.foreground))
-            .tooltip(tr("menu.new_space")).on_click(() => run("space.new", { machine: "" })).child(svg("mods/workspace-chrome/plus.svg").size(14)))))
+            .tooltip(tr("add-project.title")).on_click(() => openOverlay({ mod: "add-project", kind: "popup", at: "pointer", width: 300, height: 140, props: { step: "menu" } })).child(svg("mods/workspace-chrome/plus.svg").size(14)))))
+      .when(collapsed, (el) => el.child(railCell(div().id("space-search").size(26).flex_none().flex().items_center().justify_center().rounded(R(6)).hover(st => st.bg(t.hover).text_color(t.foreground))
+        .tooltip(tr("spaces.search")).on_click(() => run("app.palette")).child(svg("mods/workspace-chrome/search.svg").size(14)))))
       .child(v_flex().flex_1().min_h(0).px(collapsed ? 0 : 8).pb(14).overflow_y_scrollbar().mode("always").track_scroll(this.scroll)
         // A block above (another mod's) growing, or the window resizing, shrinks this list and can push the active space out.
         .on_size_change((_size, cx) => { if (this.activeAt >= 0) { this.scroll.scroll_to_item(this.activeAt); cx.notify(); } })

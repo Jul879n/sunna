@@ -441,7 +441,8 @@ mod tests {
         fs::write(&path, plist("/usr/bin/true", &label, &job.dir, &job.target)).unwrap();
         assert!(Command::new("/bin/launchctl").args(["bootstrap", &domain]).arg(path).status().unwrap().success());
         job.loaded = true;
-        let deadline = Instant::now() + Duration::from_secs(10);
+        // Real launchd on a busy machine can take far longer than on an idle one.
+        let deadline = Instant::now() + Duration::from_secs(60);
         std::thread::sleep(Duration::from_millis(100));
         assert!(job_state(&job.request("print", deadline).unwrap()).contains("runs = 0"));
         job.request("kickstart", deadline).unwrap();

@@ -3007,6 +3007,10 @@ impl AppWindow {
     fn run(&mut self, name: &str, args: Value, window: &mut Window, cx: &mut Context<Self>) {
         // A click or key has nobody to read the reply: show why it failed.
         if let Some(error) = self.run_as(name, args, true, window, cx).get("error").and_then(Value::as_str) {
+            // Closing a tab or pane when none is open has nothing to say: a script still gets the error.
+            if matches!((name, error), ("tab.close", "no tab to close") | ("pane.close", "no pane to close")) {
+                return;
+            }
             self.command_error(name, error, window, cx);
         }
     }
@@ -6739,6 +6743,32 @@ mod tests {
             assert_eq!(prompts(this), 0, "a second press closes the prompt");
             this.run("tab.rename", json!({}), window, cx);
             assert_eq!(prompts(this), 1, "and a third opens it again");
+        }));
+    }
+
+    #[test]
+    fn closing_a_tab_when_none_is_open_is_silent_for_people() {
+        in_own_process("close_without_tabs");
+    }
+
+    #[gpui::test]
+    fn close_without_tabs(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+        if !running_alone("close_without_tabs") {
+            return;
+        }
+        let (view, cx) = open_window(cx, "unused", "", json!({
+            "id": "root", "type": "block", "content": { "tab": "active" }
+        }));
+        cx.update(|window, cx| view.update(cx, |this, cx| {
+            this.documents.entry(String::new()).or_default().available = true;
+            this.sync(window, cx);
+            let toasts = |this: &super::AppWindow| this.overlays.iter().filter(|o| o.kind == super::OverlayKind::Toast).count();
+            // A script still hears why; a click or key says nothing.
+            let out = this.run_as("tab.close", json!({}), false, window, cx);
+            assert_eq!(out.get("error").and_then(|e| e.as_str()), Some("no tab to close"));
+            this.run("tab.close", json!({}), window, cx);
+            assert_eq!(toasts(this), 0);
         }));
     }
 

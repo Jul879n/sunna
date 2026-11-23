@@ -529,33 +529,15 @@ fn brand_leaves_room_for_macos_traffic_lights_only_outside_full_screen(cx: &mut 
 }
 
 #[gpui::test]
-fn tabs_leave_room_for_macos_traffic_lights(cx: &mut TestAppContext) {
+fn tabs_start_after_the_top_bar_brand_which_holds_the_window_buttons(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
-    for (platform, titlebar, fullscreen, width, lights, zoom, expected) in [
-        ("macos", "none", false, 44, true, 1.0, 32),
-        ("macos", "none", false, 44, true, 0.5, 108),
-        ("macos", "none", false, 44, true, 2.0, 10),
-        ("macos", "none", false, 60, true, 1.0, 16),
-        ("macos", "none", false, 76, true, 1.0, 10),
-        ("macos", "none", false, 268, true, 1.0, 10),
-        ("macos", "none", true, 44, true, 1.0, 10),
-        ("macos", "system", false, 44, true, 1.0, 10),
-        ("macos", "none", false, 44, false, 1.0, 10),
-        ("linux", "none", false, 44, true, 1.0, 10),
-        ("windows", "none", false, 44, true, 1.0, 10),
-    ] {
+    for (platform, fullscreen) in [("macos", false), ("macos", true), ("linux", false), ("windows", false)] {
         let mut values = fixture(true, props(), updates("current", "current"));
-        values.insert("window".into(), json!({"platform":platform,"titlebar":titlebar,"fullscreen":fullscreen,"buttons":false}));
-        values.get_mut("settings").unwrap()["zoom"] = json!(zoom);
-        let layout = values.get_mut("layout").unwrap();
-        layout["children"][0]["size"]["px"] = json!(width);
-        if !lights {
-            layout.as_object_mut().unwrap().remove("traffic_lights");
-        }
+        values.insert("window".into(), json!({"platform":platform,"titlebar":"none","fullscreen":fullscreen,"buttons":false}));
         let tree = describe_with_values(cx, &staged, "mods/tabs", values, None).unwrap();
         let root = tree.lines().next().unwrap();
-        assert!(root.contains(&format!(".pl[Number({expected}.0)]")), "{platform}/{titlebar}/{fullscreen}/{width}/{lights}: {tree}");
+        assert!(root.contains(".pl[Number(10.0)]") || !root.contains(".pl["), "{platform}/{fullscreen}: {tree}");
         assert!(tree.contains("tab-tab1"), "first tab must remain visible: {tree}");
     }
 }
@@ -787,7 +769,8 @@ fn long_space_names_use_the_sidebar_width(cx: &mut TestAppContext) {
     assert!(!label.contains(".max_w"), "a wider sidebar must show more of the name: {label}");
     assert!(!label.contains(".flex_shrink[Number(0.0)]"), "the name must give way when the row is full: {label}");
     assert!(label.contains(".flex_1") && label.contains(".min_w[Number(0.0)]"), "the name takes the row's width and gives way to the age: {label}");
-    let icon = lines.iter().find(|l| l.contains("branch.svg")).expect("the worktree space is nested");
+    // The first branch icon is the project header's new-worktree button; the space rows follow.
+    let icon = lines.iter().filter(|l| l.contains("branch.svg")).nth(1).expect("the worktree space is nested");
     assert!(icon.contains(".flex_none"), "a worktree's icon keeps its size while the name gives way: {icon}");
 }
 
