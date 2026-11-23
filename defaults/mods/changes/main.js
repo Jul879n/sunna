@@ -1,6 +1,9 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Scrollbar, v_virtual_list } from "gpui-base";
-import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, tr } from "herdr";
+import { spaces, panes, focused, exec, readTextFile, watchFolder, notify, theme, settings, tr, style } from "herdr";
+
+// Radius scale: the theme's `style.radius` (6 = the original sizes).
+const R = (n) => Math.round(n * style().radius / 6);
 
 function location() {
   const space = spaces().find((s) => s.active), f = focused();
@@ -31,8 +34,16 @@ function diffRows(lines) {
   });
 }
 
+// A patch to diff rows: file headers stay, git's own header lines go.
+const patchLines = (text) => text.replace(/\n$/, "").split("\n").filter((l) => !/^(index |--- |\+\+\+ |new file mode|deleted file mode|old mode|new mode|similarity |rename |Binary files)/.test(l));
+
 export default class Changes extends View {
   init(_props, cx) {
+    this.view = "changes"; // "changes" | "history"
+    this.branch = null; this.upstream = false; this.ahead = 0; this.behind = 0; this.gitBusy = null;
+    this.branches = null; this.branchFilter = ""; this.commits = []; this.commit_open = null;
+    this.branchInput = InputState.new({ placeholder: tr("changes.filter_branches") });
+    this.branchInput.on("change", (_e, cx) => { this.branchFilter = this.branchInput.value().toLowerCase(); cx.notify(); });
     this.files = []; this.rows = []; this.diffWidth = 0; this.message = ""; this.handle = cx.focus_handle();
     this.input = InputState.new({ placeholder: tr("changes.commit_message") });
     this.input.on("change", (_e, cx) => {
@@ -78,6 +89,8 @@ export default class Changes extends View {
         const status = await git(["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all"]);
         if (status.code !== 0) throw new Error(status.stderr);
         const head = await git(["rev-parse", "--verify", "HEAD"]);
+        const branch = await git(["branch", "--show-current"]);
+        const counts = await git(["rev-list", "--left-right", "--count", "@{u}...HEAD"]);
         const stats = {};
         const results = head.code === 0 ? [await git(["diff", "HEAD", "--numstat", "-z", "--no-renames"])] : [await git(["diff", "--cached", "--numstat", "-z", "--no-renames"]), await git(["diff", "--numstat", "-z", "--no-renames"])];
         for (const result of results) {
@@ -99,11 +112,15 @@ export default class Changes extends View {
           files.push({ path, status: s, fresh, ...stat });
         }
         if (key() !== context) return;
+        this.branch = branch.code === 0 ? branch.stdout.trim() || null : null;
+        this.upstream = counts.code === 0;
+        const [behind, ahead] = this.upstream ? counts.stdout.trim().split(/\s+/).map(Number) : [0, 0];
+        this.behind = behind || 0; this.ahead = ahead || 0;
         this.root = root; this.on = on; this.hasHead = head.code === 0; this.files = files; this.limited = entries.length > 1000; this.error = null;
         this.watch(root, cx);
         if (this.open && !files.some((f) => f.path === this.open)) { this.open = null; this.setLines([]); }
         // The first file's diff shows until you pick another.
-        if (!this.open && !this.closed && files.length) this.open = files[0].path;
+        if (!this.open && !this.closed && files.length && this.view === "changes") this.open = files[0].path;
         if (this.open) {
           try { await this.load(this.open, context); }
           catch { if (key() === context) this.setLines([tr("changes.cannot_preview_this_diff_too")]); }
@@ -168,6 +185,67 @@ export default class Changes extends View {
     cx.notify();
   }
 
+  // fetch, pull and push: one at a time, from the repository root.
+  git(args, cx) {
+    if (this.gitBusy || !this.root || this.context !== key()) return;
+    const root = this.root, on = this.on, command = `git ${args.join(" ")}`;
+    this.gitBusy = args[0]; cx.notify();
+    cx.spawn(async (cx) => {
+      try {
+        const r = await exec("git", args, { cwd: root, on, timeout: 120000 });
+        if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim());
+      } catch (e) {
+        notify({ level: "error", title: tr("changes.git_failed", { command }), body: String(e?.message ?? e).split("\n").slice(-5).join("\n") });
+      } finally { this.gitBusy = null; this.refresh(cx); cx.notify(); }
+    });
+  }
+
+  push(cx) { this.git(this.upstream ? ["push"] : ["push", "-u", "origin", this.branch ?? "HEAD"], cx); }
+
+  openBranches(cx) {
+    if (!this.root) return;
+    if (this.branches) { this.branches = null; cx.notify(); return; }
+    this.branches = []; this.branchFilter = ""; this.branchInput.set_value("");
+    const root = this.root, on = this.on;
+    cx.spawn(async (cx) => {
+      const r = await exec("git", [...READ, "branch", "--format=%(refname:short)", "--sort=-committerdate"], { cwd: root, on });
+      if (this.branches) this.branches = r.code === 0 ? r.stdout.split("\n").filter(Boolean) : [];
+      cx.notify();
+    });
+    cx.notify();
+  }
+
+  switchBranch(name, cx) { this.branches = null; this.git(["switch", name], cx); }
+
+  showView(view, cx) {
+    this.view = view; this.open = null; this.commit_open = null; this.setLines([]); this.note = null;
+    if (view === "history") this.loadHistory(cx);
+    else this.refresh(cx);
+    cx.notify();
+  }
+
+  loadHistory(cx) {
+    const root = this.root, on = this.on;
+    if (!root) return;
+    cx.spawn(async (cx) => {
+      const r = await exec("git", [...READ, "log", "-n", "50", "--format=%h%x1f%s%x1f%an%x1f%ar"], { cwd: root, on });
+      this.commits = r.code === 0 ? r.stdout.split("\n").filter(Boolean).map((l) => { const [hash, subject, author, ago] = l.split("\x1f"); return { hash, subject, author, ago }; }) : [];
+      cx.notify();
+    });
+  }
+
+  openCommit(hash, cx) {
+    this.commit_open = this.commit_open === hash ? null : hash; this.setLines([]);
+    if (!this.commit_open) { cx.notify(); return; }
+    const root = this.root, on = this.on;
+    cx.spawn(async (cx) => {
+      const r = await exec("git", [...READ, "show", "--format=", "--patch", "--no-ext-diff", "--no-textconv", "--no-color", hash], { cwd: root, on });
+      if (this.commit_open === hash) this.setLines(r.code === 0 ? patchLines(r.stdout).slice(0, 1500) : [r.stderr.trim()]);
+      cx.notify();
+    });
+    cx.notify();
+  }
+
   diffRow({ kind, number, text }, t) {
     if (kind === "@") return div().w_full().px(12).h(20).flex_none().truncate().bg(t.raised).text_color(t.dim).child(text);
     return h_flex().w_full().h(20).flex_none().gap(10).when(kind === "+", (e) => e.bg(t.ansi2 + "18")).when(kind === "-", (e) => e.bg(t.ansi1 + "18"))
@@ -175,38 +253,79 @@ export default class Changes extends View {
       .child(div().flex_1().min_w(0).truncate().child(text));
   }
 
+  gitBar(t) {
+    const busy = Boolean(this.gitBusy), ready = Boolean(this.root);
+    const btn = (id, label, action) => div().id(id).h(24).px(8).flex().items_center().rounded(R(6)).border_1().border_color(t.border).text_size(11)
+      .bg(t.background).text_color(busy || !ready ? t.dim : t.foreground).when(!busy && ready, (e) => e.cursor_pointer().hover((s) => s.bg(t.hover))).on_click((_e, cx) => action(cx)).child(label);
+    const tab = (id, label, view) => div().id(id).h(24).px(8).flex().items_center().rounded(R(6)).text_size(11).cursor_pointer()
+      .bg(this.view === view ? t.selected : t.background).text_color(this.view === view ? t.foreground : t.muted).on_click((_e, cx) => this.showView(view, cx)).child(label);
+    return h_flex().flex_none().h(36).px(10).gap(6).items_center().border_b(1).border_color(t.border)
+      .child(div().id("git-branch").max_w(120).h(24).px(8).flex().items_center().rounded(R(6)).border_1().border_color(this.branches ? t.accent : t.border).text_size(11).truncate().cursor_pointer()
+        .tooltip(tr("changes.switch_branch")).on_click((_e, cx) => this.openBranches(cx)).child(this.branch ?? (ready ? "HEAD" : "–")))
+      .child(div().text_size(11).text_color(t.dim).child(this.upstream ? `↑${this.ahead} ↓${this.behind}` : ready ? tr("changes.no_upstream") : ""))
+      .child(div().flex_1())
+      .child(btn("git-fetch", tr("changes.fetch"), (cx) => this.git(["fetch", "--prune"], cx)))
+      .child(btn("git-pull", tr("changes.pull"), (cx) => this.git(["pull", "--ff-only"], cx)))
+      .child(btn("git-push", tr("changes.push"), (cx) => this.push(cx)))
+      .child(div().w(6))
+      .child(tab("git-tab-changes", tr("changes.tab_changes"), "changes"))
+      .child(tab("git-tab-history", tr("changes.tab_history"), "history"));
+  }
+
+  branchList(t) {
+    const q = this.branchFilter, list = (this.branches ?? []).filter((b) => !q || b.toLowerCase().includes(q));
+    return v_flex().flex_none().max_h(200).p(8).gap(6).border_b(1).border_color(t.border).bg(t.surface)
+      .child(div().h(28).px(8).flex().items_center().rounded(R(6)).border_1().border_color(t.border).on_mouse_down("left", (_e, cx) => cx.stop_propagation()).child(Input.new(this.branchInput).h_full().text_size(12).text_color(t.foreground)))
+      .child(v_flex().id("git-branches").overflow_y_scroll().children(list.map((b, i) =>
+        div().id(`git-b-${i}`).h(24).px(8).flex().items_center().flex_none().rounded(R(6)).text_size(12).cursor_pointer()
+          .when(b === this.branch, (e) => e.text_color(t.accent)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.switchBranch(b, cx)).child(b))));
+  }
+
+  historyList(t) {
+    return div().flex_1().min_h(44).max_h(this.commits.length * 40 + 12).relative().border_b(1).border_color(t.border)
+      .child(v_flex().id("git-history").absolute().inset_0().overflow_y_scroll().p(6).children(this.commits.map((c, i) =>
+        v_flex().id(`git-c-${i}`).flex_none().px(8).py(4).rounded(R(7)).cursor_pointer().when(this.commit_open === c.hash, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover))
+          .on_click((_e, cx) => this.openCommit(c.hash, cx))
+          .child(h_flex().gap(8).child(div().text_size(11).text_color(t.dim).child(c.hash)).child(div().flex_1().min_w(0).truncate().child(c.subject)))
+          .child(div().text_size(11).text_color(t.dim).child(`${c.author} · ${c.ago}`))))
+        .when(!this.commits.length, (e) => e.child(div().p(8).text_color(t.dim).child(this.root ? "…" : tr("changes.no_folder")))));
+  }
+
   render(cx) {
     if (key() !== this.context) this.refresh(cx);
     const t = theme(), add = this.files.reduce((n, f) => n + f.add, 0), del = this.files.reduce((n, f) => n + f.del, 0);
     const enabled = Boolean(this.message.trim() && this.root && !this.busy && !this.loading);
-    return v_flex().id("changes").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13).track_focus(this.handle)
+    return v_flex().id("changes").size_full().min_h(0).rounded(R(10)).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13).track_focus(this.handle)
       .on_key_down((e, cx) => {
         if (e.key === "escape" && this.typing) { this.typing = false; this.handle.focus(); cx.stop_propagation(); cx.notify(); }
       })
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
         .child(div().font_semibold().child(tr("changes.changes")))
-        .child(div().px(5).py(1).rounded(4).border_1().border_color(t.border).text_size(10).text_color(t.muted).child(tr("changes.n_files", { n: this.files.length })))
+        .child(div().px(5).py(1).rounded(R(4)).border_1().border_color(t.border).text_size(10).text_color(t.muted).child(tr("changes.n_files", { n: this.files.length })))
         .child(div().flex_1()).child(div().text_size(11).text_color(t.ansi2).child(`+${add}`)).child(div().text_size(11).text_color(t.ansi1).child(`−${del}`)))
+      .child(this.gitBar(t))
+      .when(this.branches !== null, (el) => el.child(this.branchList(t)))
       // overflow_y_scrollbar() wraps the list, so its flex sizing never reached the panel's layout.
-      .child(div().flex_1().min_h(44).max_h(this.files.length * 28 + 12).relative().border_b(1).border_color(t.border)
+      .when(this.view === "history", (el) => el.child(this.historyList(t)))
+      .when(this.view === "changes", (el) => el.child(div().flex_1().min_h(44).max_h(this.files.length * 28 + 12).relative().border_b(1).border_color(t.border)
         .child(v_flex().id("changes-list").absolute().inset_0().overflow_y_scroll().p(6).children(this.files.map((f) => {
         const parts = f.path.split("/"), name = parts.pop();
-        return h_flex().id(`change-${f.path}`).h(28).flex_none().px(8).gap(8).items_center().rounded(7).cursor_pointer().when(this.open === f.path, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pick(f.path, cx))
+        return h_flex().id(`change-${f.path}`).h(28).flex_none().px(8).gap(8).items_center().rounded(R(7)).cursor_pointer().when(this.open === f.path, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pick(f.path, cx))
           .child(div().w(14).text_size(11).text_color(f.status === "A" ? t.ansi2 : f.status === "D" ? t.ansi1 : f.status === "U" ? t.ansi1 : t.blocked).child(f.status))
           .child(h_flex().flex_1().min_w(0).child(div().text_color(t.dim).truncate().child(parts.length ? parts.join("/") + "/" : "")).child(div().max_w(260).min_w(0).truncate().child(name)))
           .when(f.add > 0, (e) => e.child(div().text_size(11).text_color(t.ansi2).child(`+${f.add}`))).when(f.del > 0, (e) => e.child(div().text_size(11).text_color(t.ansi1).child(`−${f.del}`)));
       })).when(!this.files.length, (e) => e.child(div().p(8).text_color(t.dim).child(this.error || (this.loading ? tr("changes.loading_changes") : this.root ? tr("changes.no_uncommitted_changes") : tr("changes.no_folder"))))))
-        .child(Scrollbar.vertical("changes-list").absolute().inset_0()))
+        .child(Scrollbar.vertical("changes-list").absolute().inset_0())))
       .when(this.limited, el => el.child(div().px(12).py(4).text_size(11).text_color(t.dim).child(tr("changes.showing_the_first_1_000_changed"))))
       .child(div().flex_1().min_h(0).relative().font_family(settings().font_family ?? "JetBrains Mono").text_size(11)
         .child(div().id("changes-diff-x").size_full().overflow_x_scrollbar()
           .child(div().w_full().min_w(this.diffWidth).h_full().child(v_virtual_list("changes-diff", this.rows.length, 20, (i) => String(i),
             (range) => this.rows.slice(range.start, range.end).map((row) => this.diffRow(row, t))).size_full())))
         .child(Scrollbar.vertical("changes-diff").viewport_from_layout().absolute().inset_0())
-        .when(!this.open && this.files.length > 0, (e) => e.child(div().absolute().top(6).px(12).text_color(t.dim).child(tr("changes.select_a_file_to_view")))))
+        .when(!this.open && this.view === "changes" && this.files.length > 0, (e) => e.child(div().absolute().top(6).px(12).text_color(t.dim).child(tr("changes.select_a_file_to_view")))))
       .when(Boolean(this.note), (e) => e.child(div().px(10).pb(8).text_size(11).text_color(t.ansi1).child(this.note)))
       .child(h_flex().flex_none().p(10).gap(8).border_t(1).border_color(t.border)
-        .child(div().id("commit-message").flex_1().min_w(0).h(32).px(10).flex().items_center().rounded(8).border_1().border_color(this.typing ? t.accent : t.border).cursor_text().on_mouse_down("left", (_e, cx) => cx.stop_propagation()).child(Input.new(this.input).h_full().text_size(12).text_color(t.foreground)))
-        .child(div().id("commit").h(32).px(14).flex().items_center().rounded(8).bg(enabled ? t.solid : t.raised).text_color(enabled ? t.solid_foreground : t.dim).text_size(12).when(enabled, (e) => e.cursor_pointer()).on_click((_e, cx) => this.commit(cx)).child(this.busy ? tr("changes.committing") : "Commit")));
+        .child(div().id("commit-message").flex_1().min_w(0).h(32).px(10).flex().items_center().rounded(R(8)).border_1().border_color(this.typing ? t.accent : t.border).cursor_text().on_mouse_down("left", (_e, cx) => cx.stop_propagation()).child(Input.new(this.input).h_full().text_size(12).text_color(t.foreground)))
+        .child(div().id("commit").h(32).px(14).flex().items_center().rounded(R(8)).bg(enabled ? t.solid : t.raised).text_color(enabled ? t.solid_foreground : t.dim).text_size(12).when(enabled, (e) => e.cursor_pointer()).on_click((_e, cx) => this.commit(cx)).child(this.busy ? tr("changes.committing") : "Commit")));
   }
 }

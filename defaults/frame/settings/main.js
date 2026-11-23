@@ -4,11 +4,16 @@ import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, InputState, Input, Popup } from "gpui-base";
 import { hc, run, layout, keys, knownAgents, pickFolder, checking, theme, themes, fonts, updates, exec, telemetry, settings, layouts, shared, appHome, readTextFile, writeTextFile, playSound, props, closeOverlay, notify, window, tr } from "herdr";
 
+import { themeCard, ImportPanel, ThemeEditor, loadThemeFile } from "./themes.js";
+import { ModsSection } from "./mods.js";
+import { SidebarEditor } from "./sidebar.js";
+
 const I = (name) => `frame/settings/${name}.svg`;
 
 const SECTIONS = [
   { id: "look", title: "settings.look", icon: "palette" },
   { id: "layout", title: "settings.layout", icon: "layout" },
+  { id: "mods", title: "settings.mods", icon: "puzzle" },
   { id: "general", title: "settings.general", icon: "settings" },
   { id: "agents", title: "settings.agents", icon: "terminal" },
   { id: "keyboard", title: "settings.keyboard", icon: "keyboard" },
@@ -27,7 +32,7 @@ const LAYOUT_NAMES = {
 
 const SHIPPED_LAYOUTS = ["main", "terminals", "win98"];
 
-const LOOKS = { main: "Herdr", terminals: "settings.terminals", win98: "Herdr 98" };
+const LOOKS = { main: "Sunna", terminals: "settings.terminals", win98: "Herdr 98" };
 const APPEARANCES = [
   [null, "settings.system"],
   ["light", "settings.light"],
@@ -43,6 +48,11 @@ export default class Settings extends View {
     const asked = props()?.section;
     this.section = SECTIONS.some((s) => s.id === asked) ? asked : "look";
     this.picking = null; // "font" | "ui_font" while its list is open
+    this.modsSection = new ModsSection(this);
+    this.sidebar = new SidebarEditor(this, SHIPPED_LAYOUTS);
+    this.importing = false; // the theme import panel is open
+    this.importPanel = null;
+    this.editing = null; // a ThemeEditor while a theme of your own is edited
     this.filter = "";
     this.fontInput = InputState.new({ placeholder: tr("settings.type_to_search_fonts") });
     this.fontInput.on("change", (_e, cx) => { this.filter = this.fontInput.value(); cx.notify(); });
@@ -405,59 +415,62 @@ export default class Settings extends View {
     );
   }
 
+  mods(t, cx) {
+    return v_flex().w_full().child(this.heading(t, tr("settings.mods"))).child(this.modsSection.render(t, cx));
+  }
+
   themePicker(t, light) {
     const s = settings();
     const current = light ? s.theme_light : s.theme_dark;
     return h_flex()
       .w_full()
       .flex_wrap()
-      .gap(8)
+      .gap(10)
       .children(
         // A theme named like a layout (themes/win98.json) is that layout's own.
         themes()
           .filter((x) => Boolean(x.light) === light && (x.name === shared("layout") || !layouts().includes(x.name)))
-          .map(({ name, colors: c }) => {
-          const on = name === current;
-          const label = name.replace(/-/g, " ");
-          const dot = (color) => div().w(8).h(8).rounded(4).bg(color);
-          return v_flex()
-            .id(`st-t-${name}`)
-            .w(124)
-            .gap(6)
-            .p(6)
-            .rounded(10)
-            .border_2()
-            .border_color(on ? t.accent : "#00000000")
-            .cursor_pointer()
-            .hover((s) => s.bg(t.raised))
-            .on_click((_e, cx) => {
-              run("app.theme", { name });
-              cx.notify();
-            })
-            .child(
-              v_flex()
-                .h(46)
-                .w_full()
-                .p(7)
-                .gap(6)
-                .rounded(6)
-                .border_1()
-                .border_color(t.border)
-                .bg(c.background)
-                .child(div().h(4).w(44).rounded(2).bg(c.terminal_foreground))
-                .child(h_flex().gap(4).child(dot(c.accent)).child(dot(c.ansi1)).child(dot(c.ansi2)).child(dot(c.ansi3)).child(dot(c.ansi5))),
-            )
-            .child(
-              h_flex()
-                .w_full()
-                .min_w(0)
-                .gap(5)
-                .items_center()
-                .child(div().min_w(0).truncate().tooltip(label).text_size(12.5).text_color(on ? t.foreground : t.muted).child(label))
-                .when(on, (el) => el.child(svg(I("check")).size(12).flex_none().text_color(t.accent))),
-            );
-        }),
+          .map((entry) =>
+            themeCard(t, entry, {
+              selected: entry.name === current,
+              onClick: (_e, cx) => {
+                run("app.theme", { name: entry.name });
+                cx.notify();
+              },
+              onEdit: (_e, cx) =>
+                cx.spawn(async (cx) => {
+                  const file = await loadThemeFile(entry.name);
+                  if (file) this.editing = new ThemeEditor(this, { file });
+                  cx.notify();
+                }),
+            }),
+          ),
       );
+  }
+
+  // The theme tools under the "Theme" heading: import, a new theme of your own, and their panels.
+  themeTools(t, cx) {
+    const s = settings();
+    return v_flex()
+      .w_full()
+      .gap(10)
+      .child(
+        h_flex()
+          .gap(8)
+          .pb(6)
+          .child(this.button(t, "st-theme-import", tr("settings.import_theme"), (_e, cx) => {
+            this.importing = !this.importing;
+            if (this.importing) this.importPanel = new ImportPanel(this);
+            cx.notify();
+          }))
+          .child(this.button(t, "st-theme-new", tr("settings.theme_new"), (_e, cx) => {
+            const all = themes();
+            this.editing = new ThemeEditor(this, { entry: all.find((x) => x.name === s.theme) ?? all[0] });
+            cx.notify();
+          })),
+      )
+      .when(this.importing && this.importPanel !== null, (el) => el.child(this.importPanel.render(t, cx)))
+      .when(this.editing !== null, (el) => el.child(this.editing.render(t, cx)));
   }
 
   // The font in use, written in itself; a click opens the list.
@@ -573,6 +586,7 @@ export default class Settings extends View {
       .child(this.layoutPicker(t, cx))
       .child(div().h(18))
       .child(this.heading(t, tr("settings.theme")))
+      .child(this.themeTools(t, cx))
       .child(this.row(t, tr("settings.appearance"), tr("settings.light_or_dark_or_as"), this.appearancePicker(t, cx)))
       .child(div().pt(12).pb(8).text_size(12.5).text_color(t.dim).child(tr("settings.for_the_layout_you_re_in")))
       .child(div().pb(6).text_size(12.5).font_medium().text_color(t.muted).child(tr("settings.dark")))
@@ -621,7 +635,7 @@ export default class Settings extends View {
 
   // Every block of the shown layout, grouped by the row or column it sits in:
   // move one earlier or later in its group, hide or show it.
-  design(t) {
+  design(t, cx) {
     const root = layout();
     const named = (n) => (LAYOUT_NAMES[n.id] ? tr(LAYOUT_NAMES[n.id]) : n.title ?? n.id);
     const icon = (id, name, onClick) => div().id(id).cursor_pointer().p(5).rounded(5).hover((s) => s.bg(t.hover)).on_click(onClick).child(svg(name).size(14).text_color(t.muted));
@@ -651,6 +665,8 @@ export default class Settings extends View {
       .child(div().pb(12).text_size(12.5).line_height("18px").text_color(t.dim).child(tr("settings.layout_note")))
       .child(div().pb(14).child(this.button(t, "st-ly-drag", tr("settings.layout_drag"), () => { run("overlay.close"); run("layout.edit"); })))
       .children(group(root, true))
+      .child(div().h(18))
+      .child((this.sidebar ??= new SidebarEditor(this, SHIPPED_LAYOUTS)).render(t, cx))
       .when(mine, (el) => el.child(div().pt(18).child(this.button(t, "st-ly-back", tr("settings.layout_back"), () => run("layout.switch", { name: base })))));
   }
 
@@ -1059,8 +1075,8 @@ export default class Settings extends View {
       : null;
     return v_flex()
       .w_full()
-      .child(this.heading(t, "Herdr"))
-      .child(this.row(t, `Herdr ${u.app.version}`, app[0], h_flex().gap(8).flex_none()
+      .child(this.heading(t, "Sunna"))
+      .child(this.row(t, `Sunna ${u.app.version}`, app[0], h_flex().gap(8).flex_none()
         .child(this.button(t, "st-whats-new", tr("settings.what_s_new"), () => { closeOverlay(props()?.overlay); run("app.whats_new"); }))
         .when(Boolean(app[1]), (el) => el.child(app[1]))))
       .when(Boolean(f), (el) => el.child(this.row(t, tr("settings.fork_release"), forkText, forkOpen ?? div())))
@@ -1168,6 +1184,7 @@ export default class Settings extends View {
               this.picking = null;
               this.machineEdit = null;
               this.handle.focus();
+              if (s.id === "mods") this.modsSection.mods = null; // read the folders again on entering
               if (s.id === "machines") cx.spawn(async (cx) => { await this.loadMachines(); cx.notify(); });
               cx.notify();
             })
@@ -1237,7 +1254,9 @@ export default class Settings extends View {
                     this.section === "look"
                       ? this.look(t, cx)
                       : this.section === "layout"
-                        ? this.design(t)
+                        ? this.design(t, cx)
+                      : this.section === "mods"
+                        ? this.mods(t, cx)
                       : this.section === "general"
                         ? this.general(t)
                       : this.section === "agents"

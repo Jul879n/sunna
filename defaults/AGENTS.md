@@ -16,13 +16,13 @@ from the same parts you have.
 
 ## Two programs
 
-- **`herdr-app`**, the window: spaces, tabs, layouts, panels.
+- **`sunna`**, the window: spaces, tabs, layouts, panels.
 - **herdr-core (`hc`)**, which runs every terminal and agent. They keep
   running when the window closes or updates. You can use `hc` yourself:
   start a terminal, read its screen, send it text, wait for an agent
   (`hc --help`). The Herdr app is one client of it.
 
-`herdr-app` controls this app; `hc` controls herdr-core.
+`sunna` controls this app; `hc` controls herdr-core.
 
 ## What you can and can't do
 
@@ -51,7 +51,7 @@ commands. They're rewritten on every start to match this version.
 - Edits apply at once. If a file is invalid, the app keeps the last good
   version and writes why to `<name>.error` (`layout.error`, `keys.error`,
   `settings.error`, `programs.error`). Check after every edit.
-- `herdr-app check <mod folder>` loads a mod once and checks its initial
+- `sunna check <mod folder>` loads a mod once and checks its initial
   description and eager native elements, including virtual lists and motion.
   It does not lay out the mod or run deferred rows, nested renders, or later
   async states. Never call a mod done without a passing check; also try it
@@ -62,16 +62,24 @@ commands. They're rewritten on every start to match this version.
 
 ## Seeing the window
 
-`herdr-app shot [file.png]` saves the current window frame as a PNG
+`sunna shot [file.png]` saves the current window frame as a PNG
 and prints its absolute path (default: `herdr-shot.png` in your current
 folder). Use it when debugging mod UIs: inspect spacing, colors, terminal
 images, overlays, popups and floats. It captures the app, not the desktop,
 at the window’s physical pixel size, even when covered or minimized. No
 screen-recording permission is needed. Herdr must be running; before its
 first frame or during GPU recovery it reports an error instead of a PNG.
-`HERDR_APP_HOME` selects which running window to ask, as with `status`.
+`SUNNA_HOME` selects which running window to ask, as with `status`.
 
 ## The files
+
+The home is `~/.config/sunna` (`SUNNA_HOME` picks another; the older
+`HERDR_APP_HOME` still works). A home from when the app was called herdr-app
+(`~/.config/herdr-app`) is copied there once, on the first start, and left as is.
+
+Terminals, spaces and layouts live in herdr-core, in the session `sunna` (the app
+sets `HC_SESSION=sunna` unless it is already set), so Sunna and the original Herdr
+don't see each other's. To reach Sunna's terminals with `hc`, run it with `HC_SESSION=sunna`.
 
 | File | What it decides | Applied |
 |---|---|---|
@@ -88,13 +96,13 @@ first frame or during GPU recovery it reports an error instead of a PNG.
 Shared state is saved atomically in the background, with the latest change winning.
 If `shared.json` is invalid, Herdr logs a warning and keeps it as
 `shared.json.corrupt-<time>` before starting empty.
-`herdr-app check` uses empty shared state in memory and leaves this file untouched.
+`sunna check` uses empty shared state in memory and leaves this file untouched.
 
 ## The model: spaces, tabs, terminals
 
 Every layout shows the same world; a layout may show less, never a
 different one. Each machine keeps its spaces, tabs and splits in its core's
-`herdr-app` document. Connected screens share that layout and live terminals,
+`sunna` document. Connected screens share that layout and live terminals,
 not their focus, zoom or attention. Use commands to change structure; there
 is no `spaces.json`. On simultaneous edits the newest accepted document wins
 (no merging); structural commands fail while that machine's layout is unavailable.
@@ -171,8 +179,10 @@ the highlighted line shows where it will land.
 
 Each file is one whole window. `layout.switch` (`ctrl-shift-l`) cycles
 through them, `layout.switch {name}` picks one; `shared("layout")` is the
-shown one's name. Herdr ships `main` ("Herdr": spaces by machine and the
-agents list on the left, `workspace-chrome`; tabs as pills with a + menu
+shown one's name. Sunna ships `main` ("Sunna": Search and Bots, then the
+projects (spaces by machine, worktrees under their checkout, each with a
+fold-away list of its agents and their status) on the left, `spaces` and
+`workspace-chrome`; tabs as pills with a + menu
 that starts a terminal or any installed agent, `new-menu`; panes as cards
 with a header; Files and Changes panels on the right, `files` and
 `changes`, opened from the tab bar and remembered per space (which ones:
@@ -193,8 +203,8 @@ look. The theme picker overrides any layout. To change a shipped layout's
 look beyond that, or its structure/code, clone it and edit the clone:
 
 ```sh
-herdr-app do layout.clone '{"name":"main","as":"my-layout"}'
-herdr-app do mod.clone '{"name":"files","as":"my-files"}'
+sunna do layout.clone '{"name":"main","as":"my-layout"}'
+sunna do mod.clone '{"name":"files","as":"my-files"}'
 ```
 
 The default clone name is `<name>-copy`; an existing name is refused.
@@ -333,10 +343,18 @@ layout's look and a block can differ:
 - `themes/<name>.json`: `{ "background", "foreground", "selection",
   "cursor"?, "ansi": [16 colors], "colors"?: {...} }`, all `#rrggbb`; panel
   colors are derived from these, `colors` overrides them. Herdr ships
-  `atom-one-dark`. The original unedited Atom One Dark and Win98 theme files
+  `atom-one-dark` and twelve more (Catppuccin, Dracula, Nord, Tokyo Night,
+  Gruvbox, Rosé Pine, GitHub). The original unedited Atom One Dark and Win98 theme files
   are upgraded to readable terminal colors; edited theme files are kept.
   A theme named like a layout (`themes/win98.json`) is
   that layout's own: Settings offers it only there.
+  A theme may also carry `"style": {...}`, how the interface is drawn: `radius`
+  (0..24, base radius of the mods' controls, 6 = the usual), `pane_radius`
+  (0..24) and `pane_gap` (0..32) and `border_width` (0..4; 0 removes the
+  pane border and focus ring) of the pane frame, `shadow` (`none`, `sm`, `md`,
+  `lg`), and `font`, `font_size` (6..72), `ui_font`. The chosen theme wins over
+  the layout and settings.json, as its colors do. Mods read it with `style()`
+  and scale their corners with `Math.round(n * style().radius / 6)`.
 - `terminal_line_height`: row height multiplier (default 1, clamped to 0.8..2).
   Text stays centred; joining characters, cursors and images follow the rows.
 - `terminal_cell_width`: column width multiplier (default 1, clamped to 0.8..2),
@@ -450,6 +468,61 @@ Narrower than 160px, the sidebar mods draw a compact rail; folding resizes
 `sidebar` to 44 (76 on macOS, room for the traffic lights). On macOS,
 the tabs also leave room for the window buttons when the sidebar is narrower.
 
+### Themes, mods and panels people add from Settings
+
+- Themes: Settings > Look shows each theme as a card with a preview. *Import*
+  reads Ghostty, Warp and VS Code/Cursor themes into `themes/<name>.json`
+  (never over an existing one); *New theme* opens an editor (colors, `style`)
+  that saves the same file. Edit those files directly just as well.
+- Mods: Settings > Mods lists `mods/<name>/` with the optional `mod.json`
+  fields `name`, `description`, `author`, `version`, `homepage`, `preview` and
+  `panel: { "title", "icon" }`. A mod can be turned off (its folder moves to
+  `mod-store/disabled/<name>/`) and back, or deleted. Herdr's own mods can only
+  be duplicated (`mod.clone`).
+- Install: from `owner/repo[@ref]`, a git URL or a folder. Herdr shows what
+  it found and what each mod can do (programs, network, files) before
+  copying; nothing existing is overwritten. An installed mod keeps
+  `mods/<name>/.herdr-install.json` (`source`, `ref`, `commit`) and can be
+  checked for updates. The *Explore* tab lists GitHub repos with the topic
+  `herdr-mod` or `herdr-theme`.
+- Right sidebar: the stack `panel-body` of the `main` layout holds the panels
+  (`files`, `changes`, `search`, `bots`). A mod whose `mod.json` has `panel`
+  can be added as a child `panel-<mod>` (`{"content":{"mod":"<mod>"}}`);
+  Settings > Layout > Right sidebar adds, orders and removes them, and
+  `shared("workspace.panels")` lists the ids shown in the tab bar. Editing a
+  Herdr layout copies it to `my-<name>` first.
+- Search panel (`mods/search`): text search in the focused folder with `rg`,
+  else `git grep`, else `grep`. A result opens in Files (`shared("files.reveal")`).
+- Changes panel: branch, ahead/behind, fetch, pull (`--ff-only`), push, a
+  branch picker and a History tab, run with `git` in the repository.
+
+### Bots: `bots/<name>/`
+
+A bot is an agent that starts by itself (mod `bots`, panel *Bots*; it runs
+while the window is open). Files in `bots/<name>/`:
+
+- `SOUL.md`: first paragraph is the purpose, the rest the instructions; it is
+  the agent's first message.
+- `bot.json`: `{ "agent": "claude", "folder": "~/dev/app", "enabled": true,
+  "yolo": false, "max_runs_per_day": 10, "triggers": [...] }`. Triggers:
+  `{"type":"manual"}`, `{"type":"interval","minutes":60}`,
+  `{"type":"daily","at":"09:00"}`, `{"type":"github","query":"is:pr is:open
+  review-requested:@me","every_minutes":10}` (needs `gh`).
+- `runs.json`: written by the mod (last 100 runs, items already seen).
+
+The panel's *Plantillas* button opens a gallery (search, categories: releases,
+support, planning, personal) of starting points; each has the text it starts
+with and its triggers. A template with a schedule or GitHub trigger creates its
+bot switched off (`"enabled": false`) until the person turns it on; a manual
+one is ready. A bot's *Detalle* shows where it runs and what permissions it has
+(it acts as the person). The sidebar asks the panel for the gallery or a new
+bot with the shared keys `bots.templates` and `bots.new` (a timestamp).
+
+Each run is a tab `bot <name> #n` in the space `bot: <name>`, started without
+taking focus. `yolo` is ignored for github triggers (their text comes from
+outside), the first github poll only learns what exists, and a bot does not
+start while its previous run is still working.
+
 ### Layouts and mods other people made
 
 People share layouts at herdr.dev/layouts and mods at herdr.dev/mods. Each
@@ -474,7 +547,7 @@ folder on GitHub):
    recipe instead.
 4. A mod's `keys.json`: merge it into the person's. Add its sections and
    keys, and ask before replacing a key they already use.
-5. `herdr-app check` each mod; for a layout, then `layout.switch {name}`.
+5. `sunna check` each mod; for a layout, then `layout.switch {name}`.
    The person's own layout stays as it was; `ctrl-shift-l` switches back,
    and deleting the files removes it.
 
@@ -560,10 +633,10 @@ shortcuts must then be added by hand.
 ## Commands
 
 The one way to change anything; keys, mods (`run(name, args)`), menus and
-you use the same list. `herdr-app commands` prints every one with its arguments
+you use the same list. `sunna commands` prints every one with its arguments
 (which are required) and what it does. Unknown argument names are errors and list
 valid names; they never fall back to the current target. For example, closing a
-space uses `herdr-app do space.close --id <id> --confirmed true`, not `--space`.
+space uses `sunna do space.close --id <id> --confirmed true`, not `--space`.
 Target IDs (`id`, `pane`, `space`, `terminal`) must be strings. Other non-null
 types are rejected before a current-target default applies; null means omitted.
 The main ones:
@@ -664,7 +737,7 @@ The main ones:
   (personal tree edits; on shipped layouts only click/look fields change),
   `layout.reset {name?}` (reset a shipped layout and its clicks),
   `layout.clone {name, as?}` (duplicate, then switch; default `<name>-copy`).
-- App: `mod.clone {name, as?}` (duplicate; default `<name>-copy`), `mod.open {name}` (again: closes it), `overlay.close {id?}`, `app.help` (again: closes it), `app.palette` (again: closes it), `app.settings {section?}` (section: look, layout, general, agents, keyboard, machines, alerts, updates, privacy), `app.keep_awake {mode?}`
+- App: `mod.clone {name, as?}` (duplicate; default `<name>-copy`), `mod.open {name}` (again: closes it), `overlay.close {id?}`, `app.help` (again: closes it), `app.palette` (again: closes it), `app.settings {section?}` (section: look, layout, mods, general, agents, keyboard, machines, alerts, updates, privacy), `app.keep_awake {mode?}`
   (sections: `look`, `machines`, `alerts`, `updates`, `privacy`; Machines lists, updates, renames and removes ssh machines; settings edit the same files you do).
   `app.check_updates` (only a successful check reports Up to date; a failed check clears the checked time and can be retried), `app.update_core` (a newer herdr-core of this generation, terminals kept;
   never one a package manager owns), `app.welcome`, `app.whats_new`, `app.feedback {message?, from?}` (from `"person"` or `"agent"`; opens a review window, where the person can paste up to 3 screenshots; never sends until the person clicks Send), `app.reset`,
@@ -694,14 +767,14 @@ command says what's missing.
 From a shell:
 
 ```sh
-herdr-app do tab.new --name "fix login" --argv '["claude"]' --task "look at the login bug"
-herdr-app do pane.split:right
-herdr-app ls          # spaces, their tabs and terminals (sub-agents under their parent)
-herdr-app status      # what's on screen: layout, focus, overlays, zoom, errors from files and mods
-herdr-app commands    # every command and its arguments
+sunna do tab.new --name "fix login" --argv '["claude"]' --task "look at the login bug"
+sunna do pane.split:right
+sunna ls          # spaces, their tabs and terminals (sub-agents under their parent)
+sunna status      # what's on screen: layout, focus, overlays, zoom, errors from files and mods
+sunna commands    # every command and its arguments
 ```
 
-`herdr-app do` prints what the command made (`{ "space", "tab",
+`sunna do` prints what the command made (`{ "space", "tab",
 "terminal" }`, `{ "pane", "terminal" }`) or `{ "error": "..." }` and exits 1.
 
 ## The person: `settings.json`
@@ -718,7 +791,7 @@ What's about the user, never a look:
   When an agent needs the person, or finishes while they aren't looking at
   it, Herdr plays a sound and (unless they're looking) posts a toast that
   goes there when clicked. `done` / `blocked` replace the bundled MP3s
-  (path absolute or relative to `~/.config/herdr-app`). Changes apply live,
+  (path absolute or relative to `~/.config/sunna`). Changes apply live,
   including the Play buttons in Settings > Alerts.
 - `language`: `"es"` or `"en"`. Absent: the system's language. Applies live;
   macOS menus change on restart.
@@ -796,7 +869,7 @@ What's about the user, never a look:
   macOS releases require Apple Silicon; Intel Macs must build from source.
   Keep signed macOS bundles unchanged: don't edit their Info.plist or
   re-sign them. On launch, an installed macOS bundle creates or repairs its
-  own `~/.local/bin/herdr-app` symlink, leaving personal files and other
+  own `~/.local/bin/sunna` symlink, leaving personal files and other
   apps' links alone. Disk-image and translocated launches don't create it.
   Finder launches load the login shell's PATH, with the usual install
   folders as a fallback.
@@ -894,7 +967,7 @@ has 124 programs (agents, editors, runtimes, tools, databases, infra);
 ## Mods: `mods/<name>/`
 
 ```
-~/.config/herdr-app/mods/<name>/
+~/.config/sunna/mods/<name>/
   main.js       the mod (required)
   mod.json    where it first appears: { "place": "right" | "left" | "top" | "bottom" | "none", "size": 320 }
   *.js, *.svg   more modules ("./ui.js"), its own icons
@@ -912,7 +985,7 @@ has 124 programs (agents, editors, runtimes, tools, databases, infra);
   (not files the app writes: `jsconfig.json`, `.d.ts`, hidden ones,
   `node_modules`). The old build's tasks and timers stop: a loop ends at its
   next `cx` use. A broken save keeps the old version running and shows in
-  `herdr-app status`; its top-level code has already run, so keep side effects
+  `sunna status`; its top-level code has already run, so keep side effects
   on `globalThis` out of the module's top level.
 - A copy starts the first time it shows, then stays alive while its block is in
   the layout, shown or not (a hidden column, the other child of a stack, a pane
@@ -920,7 +993,7 @@ has 124 programs (agents, editors, runtimes, tools, databases, infra);
   timers keep running while hidden, so poll gently. Another layout starts its
   mods fresh (pane mods belong to their tab and stay); a block removed or given
   another mod or props starts over. `<mod>.<command>` reaches shown copies only.
-- Images and SVGs are referenced from `~/.config/herdr-app`:
+- Images and SVGs are referenced from `~/.config/sunna`:
   `image("mods/<name>/logo.svg")` (full color), `svg("mods/<name>/icon.svg")`
   (tinted with the text color). Saving an asset under `mods/` updates every
   mod showing it, including images that were missing or invalid on first load.
@@ -943,7 +1016,7 @@ has 124 programs (agents, editors, runtimes, tools, databases, infra);
 ### Check before you finish
 
 ```sh
-herdr-app check ~/.config/herdr-app/mods/<name>
+sunna check ~/.config/sunna/mods/<name>
 ```
 
 Loads the mod, renders it once, exits nonzero with the exact error. Run it
@@ -1085,7 +1158,7 @@ the person's language and `locale()` names it.
   the first read even if it fails, and offline machines are unavailable),
   `agents()` (status, app, space, tab, pinned, focused; "done" turns "idle"
   once someone looks at it on any Herdr client), `terminals()`
-  (every core terminal), `focused()`, `layout()`, `theme()` (every color by
+  (every core terminal), `focused()`, `layout()`, `theme()` and `style()` (the theme's `style` block, `radius` 6 if unset; every color by
   name: background (the terminals', cards), canvas (behind cards), chrome
   (sidebars, bars), surface, popover, raised, hover, selected, border,
   input (a stronger border), foreground, muted, dim, accent,
@@ -1161,14 +1234,14 @@ the person's language and `locale()` names it.
 
 Mods are trusted code: commands and network access (including `fetch`) are unrestricted.
 Other built-ins: `localStorage` (per mod copy), `console.log`, `fetch`,
-`import * as fs from "fs/promises"` (read in home, write under `~/.config/herdr-app`).
+`import * as fs from "fs/promises"` (read in home, write under `~/.config/sunna`).
 
 ## herdr-core (`hc`)
 
-`herdr-app --skill` prints the manual for driving this window;
+`sunna --skill` prints the manual for driving this window;
 `hc --skill` prints the manual for running and coordinating programs and agents,
 including a small herdr-core skill you can install with the user's permission.
-`herdr-app commands` lists app commands and arguments without needing an open window.
+`sunna commands` lists app commands and arguments without needing an open window.
 
 - `hc ls --json`, `hc read t3 --lines 50`, `hc run --json --cwd <dir> --label k=v -- <cmd>`,
   `hc label t3 k=v`, `hc send t3 "text"`, `hc wait t3`. `hc --help` for all.

@@ -368,8 +368,8 @@ mod tests {
         edited.find_mut("side").unwrap().size = Some(Size::Px { px: 200.0 });
         let mut s2 = s.clone();
         s2.forget_edited(&file, &edited);
-        assert!(s2.nodes.get("side").is_none());
-        assert!(s2.nodes.get("panel").is_some());
+        assert!(!s2.nodes.contains_key("side"));
+        assert!(s2.nodes.contains_key("panel"));
     }
 
     #[test]

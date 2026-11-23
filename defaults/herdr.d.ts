@@ -321,10 +321,11 @@ export function placement(): {
  *  paper, paper on ink), selection, working, blocked, done, idle, unknown, ansi0..ansi15.
  *  Light and dark themes name the same colors, so a mod that uses them follows both. */
 export function theme(): Record<string, string>;
+export function style(): { radius: number; pane_radius: number | null; pane_gap: number | null; border_width: number | null; shadow: "none" | "sm" | "md" | "lg" | null; font: string | null; font_size: number | null; ui_font: string | null };
 
 /** Every theme `app.theme` can use (presets, then `themes/*.json`), each with its colors and
  *  whether it's light. */
-export function themes(): { name: string; light: boolean; colors: Record<string, string> }[];
+export function themes(): { name: string; light: boolean; colors: Record<string, string>; style: { radius?: number; pane_radius?: number; pane_gap?: number; border_width?: number; shadow?: string; font?: string; font_size?: number; ui_font?: string }; shipped: boolean }[];
 
 /** The font families on this machine, by name. */
 export function fonts(): string[];

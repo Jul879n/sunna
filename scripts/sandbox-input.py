@@ -20,7 +20,7 @@ root = d.screen().root
 
 
 def find(w):
-    if w.get_wm_name() == "Herdr":
+    if w.get_wm_name() == "Sunna":
         return w
     for c in w.query_tree().children:
         r = find(c)

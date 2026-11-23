@@ -1,0 +1,4 @@
+# Tests render many mods in parallel; a render can be starved past the 50 ms JS render budget
+# and be cut off as "interrupted". The scale only applies to processes cargo runs (test, run).
+[env]
+SUNNA_JS_BUDGET_SCALE = "10"

@@ -130,7 +130,7 @@ test("a failed agent check keeps cached launchable agents and shows an error ins
     const globals = {
       View: class {}, spaces: () => [], shared: () => ({ "": agents }), setShared: (...args: unknown[]) => writes.push(args),
       knownAgents: async () => { throw Error("shell failed"); },
-      theme: () => ({}), props: () => ({}), keys: () => [], window: () => ({ platform: "macos" }), panes: () => [],
+      theme: () => ({}), style: () => ({ radius: 6 }), props: () => ({}), keys: () => [], window: () => ({ platform: "macos" }), panes: () => [],
       div: element, svg: element, image: element, h_flex: element, v_flex: element, tr,
     };
     const NewMenu = new Function(...Object.keys(globals), `${menuSource}; return NewMenu;`)(...Object.values(globals));
@@ -160,7 +160,7 @@ for (const sort of ["priority", "grouped"]) test(`${sort} render reads panes onc
     panes: () => { reads++; return structuredClone(snapshot); }, focused: () => null,
     spaces: () => [{ tabs: list.map(a => ({ id: a.tab, name: "Claude", named: true })) }],
     layout: () => ({ id: "sidebar", size: { px: 268 } }), shared: () => sort,
-    theme: () => ({}), setAgentOrder: (order: string[]) => orders.push(order),
+    theme: () => ({}), style: () => ({ radius: 6 }), setAgentOrder: (order: string[]) => orders.push(order),
     div: element, v_flex: element, h_flex: element, svg: element, image: element,
   });
   const first = textOf(agents.render({}).node);
@@ -186,7 +186,7 @@ for (const sort of ["priority", "grouped"]) for (const named of [false, true]) t
     panes: () => list.map(a => ({ ...a, terminal: a.address })), focused: () => null,
     spaces: () => [{ tabs: [{ id: "shared", name: named ? "Named tab" : "1", named }, { id: "solo", name: "Solo tab", named: true }] }],
     layout: () => ({ id: "sidebar", size: { px: 268 } }), shared: () => sort,
-    theme: () => ({}), setAgentOrder() {},
+    theme: () => ({}), style: () => ({ radius: 6 }), setAgentOrder() {},
     div: element, v_flex: element, h_flex: element, svg: element, image: element,
   });
   const rows = () => {
@@ -222,7 +222,7 @@ function keptRender(sort: string, { width = 268, kept = [{ address: "t3", parent
     panes: () => list.map(a => ({ tab: a.tab, terminal: a.address, program, title: a.title })), focused: () => null,
     spaces: () => [{ tabs: [{ id: "tab1", name: "Project", named: true }] }],
     layout: () => ({ id: "sidebar", size: { px: width } }), shared: () => sort,
-    theme: () => ({}), setAgentOrder: (order: string[]) => orders.push(order),
+    theme: () => ({}), style: () => ({ radius: 6 }), setAgentOrder: (order: string[]) => orders.push(order),
     div: element, v_flex: element, h_flex: element, svg: element, image: element,
   });
   const ids: string[] = [];
@@ -275,14 +275,14 @@ test("a title that opens with a bracket keeps it; each agent's own prefix still 
   // Titles as each agent writes them (from its source).
   const titles: [string, string][] = [
     ["[herdr] config", "[herdr] config"], // Claude Code: the session name
-    ["⠋ [herdr] config | herdr-app", "[herdr] config | herdr-app"], // Codex working
-    ["[ ! ] Action Required | [herdr] config | herdr-app", "Action Required | [herdr] config | herdr-app"], // Codex needs you
-    ["[ . ] Action Required | [herdr] config | herdr-app", "Action Required | [herdr] config | herdr-app"], // ... its other blink phase
-    ["● [ ! ] Action Required | herdr-app", "Action Required | herdr-app"], // ... with the microphone on
-    ["✦  [herdr] config (herdr-app)", "[herdr] config (herdr-app)"], // Gemini working
-    ["◇  Ready (herdr-app)", "Ready (herdr-app)"], // Gemini idle
+    ["⠋ [herdr] config | sunna", "[herdr] config | sunna"], // Codex working
+    ["[ ! ] Action Required | [herdr] config | sunna", "Action Required | [herdr] config | sunna"], // Codex needs you
+    ["[ . ] Action Required | [herdr] config | sunna", "Action Required | [herdr] config | sunna"], // ... its other blink phase
+    ["● [ ! ] Action Required | sunna", "Action Required | sunna"], // ... with the microphone on
+    ["✦  [herdr] config (sunna)", "[herdr] config (sunna)"], // Gemini working
+    ["◇  Ready (sunna)", "Ready (sunna)"], // Gemini idle
     ["OC | [herdr] config", "OC | [herdr] config"], // OpenCode
-    ["π - [herdr] config - herdr-app", "π - [herdr] config - herdr-app"], // Pi
+    ["π - [herdr] config - sunna", "π - [herdr] config - sunna"], // Pi
     ["⠋ - Thinking - [herdr] config - grok", "Thinking - [herdr] config - grok"], // Grok: the spinner's " - " goes too
   ];
   for (const [raw, shown] of titles) expect(clean(raw)).toBe(shown);

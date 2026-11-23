@@ -1,7 +1,7 @@
-# herdr-app: drive the person's window
+# sunna: drive the person's window
 
 Herdr shows spaces, tabs and panes. herdr-core (`hc`) runs their terminals
-and keeps them alive when the window closes. Use `herdr-app` only to change
+and keeps them alive when the window closes. Use `sunna` only to change
 what the person sees. For starting, reading, messaging, waiting on or cleaning
 up agents and programs, read `hc --skill` and use hc.
 Your terminal address is `$HC_TERMINAL_ID`; it is not a pane ID.
@@ -9,14 +9,14 @@ Your terminal address is `$HC_TERMINAL_ID`; it is not a pane ID.
 ## Inspect before acting
 
 ```sh
-herdr-app ls          # spaces > tabs > terminals, including pane IDs
-herdr-app status      # current layout, focus, overlays, zoom and file/mod errors
-herdr-app commands    # available commands, arguments and descriptions
+sunna ls          # spaces > tabs > terminals, including pane IDs
+sunna status      # current layout, focus, overlays, zoom and file/mod errors
+sunna commands    # available commands, arguments and descriptions
 ```
 
 `ls` and `status` talk to the running window, not a new app. `commands`
 prints the built-in command list even without an open window. Do not launch bare
-`herdr-app` to inspect it: that opens or raises the window. Do not stop,
+`sunna` to inspect it: that opens or raises the window. Do not stop,
 signal or restart the person's app or core. A window closing does not kill
 its terminals.
 
@@ -33,7 +33,7 @@ To start one the person will look at later without moving them there, pass
 `--focus false`:
 
 ```sh
-herdr-app do space.new --name eng-123 --folder ~/code/app/eng-123 --argv '["claude"]' --task "Implement ENG-123" --focus false
+sunna do space.new --name eng-123 --folder ~/code/app/eng-123 --argv '["claude"]' --task "Implement ENG-123" --focus false
 ```
 
 Pick an explicit, useful name for every new space and tab; don't rely on
@@ -41,16 +41,16 @@ default names. Use IDs from `ls` rather than guessing or acting on the wrong
 focused pane.
 
 ```sh
-herdr-app do space.new --name api --folder /path/to/api
-herdr-app do tab.new --name "fix login" --argv '["claude"]' --task "Look at the login bug"
-herdr-app do pane.split --direction right --pane p12
-herdr-app do agent.focus --terminal t7
+sunna do space.new --name api --folder /path/to/api
+sunna do tab.new --name "fix login" --argv '["claude"]' --task "Look at the login bug"
+sunna do pane.split --direction right --pane p12
+sunna do agent.focus --terminal t7
 ```
 
 For a remote space:
 
 ```sh
-herdr-app do space.new --name "remote api" --machine vps --folder /srv/api
+sunna do space.new --name "remote api" --machine vps --folder /srv/api
 ```
 
 The folder is on that machine; tabs and splits in the space stay there.
@@ -74,7 +74,7 @@ the current-target default can apply. Null keeps its omitted-argument meaning.
 Use `commands` to confirm the command's exact shape:
 
 ```sh
-herdr-app do pane.split '{"direction":"right","pane":"p12"}'
+sunna do pane.split '{"direction":"right","pane":"p12"}'
 ```
 
 `pane.swap {pane?, direction | target}` trades the places of `pane` (default:
@@ -82,7 +82,7 @@ the focused one) and its neighbor in a direction, or `target`, another pane of
 the same tab. Give `direction` or `target`, not both. Focus stays with the same pane:
 
 ```sh
-herdr-app do pane.swap '{"pane":"p12","target":"p14"}'
+sunna do pane.swap '{"pane":"p12","target":"p14"}'
 ```
 
 `terminal.select_all {terminal?}` selects a terminal's whole screen and scrollback,
@@ -124,7 +124,7 @@ the screen.
 
 ## Customize layouts, keys, or mods
 
-First read `~/.config/herdr-app/AGENTS.md` (or `$HERDR_APP_HOME/AGENTS.md` if
+First read `~/.config/sunna/AGENTS.md` (or `$SUNNA_HOME/AGENTS.md` if
 set). It is the installed guide to settings, layouts, commands and mods.
 Read the generated `.d.ts` files beside it for full API details; do not edit
 those files or the generated guide. The app rewrites them on start.
@@ -134,7 +134,7 @@ those files or the generated guide. The app rewrites them on start.
   `terminal_scroll_speed` (default 1, 0.1..5) adjusts wheel and trackpad
   scrolling, including mouse reports. Set them in settings.json or the
   layout's look; the layout wins.
-- Home defaults to `~/.config/herdr-app`; `HERDR_APP_HOME` selects another.
+- Home defaults to `~/.config/sunna`; `SUNNA_HOME` selects another.
 - `worktrees.directory` in settings.json sets the shipped New worktree destination,
   e.g. `{"worktrees":{"directory":"~/Developer/worktrees"}}`. Default:
   `~/.herdr/worktrees`; checkouts use `<directory>/<repo>/<branch>` (slashes in
@@ -152,7 +152,7 @@ those files or the generated guide. The app rewrites them on start.
   `layout.edit` toggles a drag mode for rearranging the blocks of the shown
   layout; `layout.move {id, before|after}` does it by command, and on a shipped
   layout first copies it to `my-<name>` (reused on later moves).
-  Discover required arguments with `herdr-app commands`.
+  Discover required arguments with `sunna commands`.
 - Save to reload. A broken save keeps the old version running and reports
   an error in `status`; a still-working screen is not proof the edit worked.
 - Make only the requested change. Don't touch unrelated mods or settings.
@@ -167,9 +167,9 @@ those files or the generated guide. The app rewrites them on start.
 After every mod change:
 
 ```sh
-herdr-app check ~/.config/herdr-app/mods/<name>
-herdr-app status
-herdr-app shot /tmp/mod.png   # then look at the picture
+sunna check ~/.config/sunna/mods/<name>
+sunna status
+sunna shot /tmp/mod.png   # then look at the picture
 ```
 
 `check` loads the mod and renders it once. It exits nonzero with the exact
@@ -181,16 +181,16 @@ and warn during checks. Never call a mod done without a passing check.
 Then confirm it is shown correctly in the running window with `shot`; don't claim a visual
 check you haven't made.
 
-`herdr-app shot [file.png]` saves the window's current frame and prints its
+`sunna shot [file.png]` saves the window's current frame and prints its
 absolute path (default: `herdr-shot.png` in your current folder). It is the
 app's own rendering at full pixel size: terminals, images, overlays and
 floats included, even when the window is covered or minimized. No screen
 capture or permissions. It needs a running window that has drawn a frame;
-`HERDR_APP_HOME` selects the window, as for `status`.
+`SUNNA_HOME` selects the window, as for `status`.
 
 ## Problems and safety
 
-If Herdr misbehaves, `herdr-app feedback "<what happened>"` drafts a report.
+If Herdr misbehaves, `sunna feedback "<what happened>"` drafts a report.
 The person reviews and sends it; it does not silently send feedback.
 
 Never experiment with pointer/key automation on the person's real display.

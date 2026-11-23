@@ -1,4 +1,10 @@
-# Herdr changelog
+# Sunna changelog
+
+## [0.1.16] - 2026-11-16
+
+### Fixed
+- **Folder search no longer times out on large indexes.**
+- **On macOS the app installs to /Applications.**
 
 ## [0.1.15] - 2026-11-10
 

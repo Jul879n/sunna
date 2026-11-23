@@ -281,6 +281,35 @@ pub struct PaneFrame {
     pub lone: bool,
 }
 
+impl PaneFrame {
+    /// This frame with the active theme's `style` applied over it.
+    pub fn styled(&self, st: &crate::settings::UiStyle) -> PaneFrame {
+        let mut f = self.clone();
+        if let Some(r) = st.pane_radius {
+            f.radius = Some(r);
+        }
+        if let Some(g) = st.pane_gap {
+            f.gap = Some(g);
+        }
+        if let Some(w) = st.border_width {
+            if w == 0.0 {
+                f.border = None;
+                f.focus = None;
+            } else {
+                for line in [&mut f.border, &mut f.focus].into_iter().flatten() {
+                    line.width = w;
+                }
+            }
+        }
+        match st.shadow.as_deref() {
+            Some("none") => f.shadow = None,
+            Some(v) => f.shadow = Some(v.to_owned()),
+            None => {}
+        }
+        f
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Kind {
@@ -809,6 +838,14 @@ mod tests {
                 { "id": "status", "type": "block", "content": {"mod": "d"} } ] } ] }"#,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn pane_frame_styled() {
+        let f: PaneFrame = serde_json::from_str(r#"{"radius":10,"gap":8,"border":{"width":1}}"#).unwrap();
+        let st = crate::settings::UiStyle { pane_radius: Some(0.0), border_width: Some(0.0), ..Default::default() };
+        let g = f.styled(&st);
+        assert_eq!((g.radius, g.gap, g.border), (Some(0.0), Some(8.0), None));
     }
 
     fn ids(n: &Node) -> Vec<&str> {

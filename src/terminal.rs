@@ -903,11 +903,10 @@ impl TerminalView {
         self.search_query = input.read(cx).value().to_string();
         self.grid.borrow_mut().vt.start_search(&self.search_query);
         self.focus_search_input(window, cx);
-        if reopening && !self.search_query.is_empty() {
-            if let Some(input) = &self.search_input {
+        if reopening && !self.search_query.is_empty()
+            && let Some(input) = &self.search_input {
                 input.update(cx, |state, cx| state.select_all(window, cx));
             }
-        }
         self.ensure_search_task(cx);
         cx.notify();
     }
@@ -2154,12 +2153,9 @@ fn paint_grid(bounds: Bounds<Pixels>, grid: &Rc<RefCell<Grid>>, focused: bool, w
     // cached RowOps or the terminal's own selection/copy state.
     for (y, (_, ops, _)) in painted.iter().enumerate() {
         for op in ops {
-            match op {
-                RowOp::Bg { from, to, color } => {
-                    let b = Bounds::new(at(*from, y), size(cell.width * (to - from) as f32, cell.height));
-                    window.paint_quad(fill(snap_box(b), *color));
-                }
-                _ => {}
+            if let RowOp::Bg { from, to, color } = op {
+                let b = Bounds::new(at(*from, y), size(cell.width * (to - from) as f32, cell.height));
+                window.paint_quad(fill(snap_box(b), *color));
             }
         }
     }

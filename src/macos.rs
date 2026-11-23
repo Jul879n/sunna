@@ -69,7 +69,7 @@ pub(crate) fn menus(layouts: &[String], shown: Option<&str>) -> Vec<Menu> {
         .map(|name| command(name, &format!("layout.switch:{name}")).checked(Some(name.as_str()) == shown))
         .chain([MenuItem::separator(), command(&crate::i18n::t("rs.macos.next_layout"), "layout.switch")]);
     vec![
-        Menu::new("Herdr").items([
+        Menu::new("Sunna").items([
             command(&crate::i18n::t("rs.macos.what_s_new"), "app.whats_new"),
             command(&crate::i18n::t("rs.macos.check_for_updates"), "app.settings:updates"),
             MenuItem::separator(),
@@ -188,7 +188,7 @@ mod tests {
         assert_eq!(key("New Tab").as_deref(), Some("cmd-t"));
         assert_eq!(key("Split Right").as_deref(), Some("cmd-d"));
         assert_eq!(key("Settings…").as_deref(), Some("cmd-,"));
-        assert_eq!(key("Quit Herdr").as_deref(), Some("cmd-q"));
+        assert_eq!(key("Quit Sunna").as_deref(), Some("cmd-q"));
         assert_eq!(key("Copy").as_deref(), Some("cmd-c"));
         assert_eq!(key("Toggle Sidebar").as_deref(), Some("cmd-b"));
         assert_eq!(key("Minimize").as_deref(), Some("cmd-m"));

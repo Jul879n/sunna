@@ -14,7 +14,7 @@ function harness(replies: unknown[] = [], storage = new Map<string, string>(), s
   const availability = [{ name: null as string | null, layout: "ready" }];
   const moves: { id: string; index: number }[] = [];
   const handlers: Record<string, (...args: any[]) => void> = {};
-  const env = { layout: null as unknown };
+  const env = { layout: null as unknown, agents: [] as any[] };
   // The list's scroll position: the requests the view makes are what the sidebar would scroll by.
   const ScrollHandle = { new: () => ({ calls: [] as number[], scroll_to_item(index: number) { this.calls.push(index); } }) };
   const theme = () => new Proxy({}, { get: () => "#000000" });
@@ -24,7 +24,7 @@ function harness(replies: unknown[] = [], storage = new Map<string, string>(), s
     if (method === "track_scroll") tracked.push(args[0]);
     return element;
   } });
-  const Spaces = new Function("View", "hc", "localStorage", "spaces", "panes", "run", "v_flex", "h_flex", "div", "svg", "shared", "machines", "exec", "window", "watchFolder", "ScrollHandle", "theme", "layout", "setShared", "tr", `${source}; return Spaces;`)(
+  const Spaces = new Function("View", "hc", "localStorage", "spaces", "panes", "run", "v_flex", "h_flex", "div", "svg", "shared", "machines", "exec", "window", "watchFolder", "ScrollHandle", "theme", "layout", "setShared", "tr", "style", "image", "agents", "appHome", "readTextFile", "readdir", "setAgentOrder", `${source}; return Spaces;`)(
     class {},
     async (args: string[]) => {
       calls.push(args);
@@ -39,7 +39,8 @@ function harness(replies: unknown[] = [], storage = new Map<string, string>(), s
       moves.push(args);
     },
     ...Array(4).fill(() => element), () => null, () => availability, execGit, () => ({ active: true }), watch,
-    ScrollHandle, theme, () => env.layout, () => {}, tr,
+    ScrollHandle, theme, () => env.layout, () => {}, tr, () => ({ radius: 6 }),
+    () => element, () => env.agents, () => "/home", async () => null, async () => [], () => null,
   );
   const view = new Spaces();
   view.reconnecting = {};
@@ -480,22 +481,22 @@ const spaceList = (ids: string[], active: string, remote: string[] = []): Space[
 test("the active space is brought into view once, and left alone while it stays put", () => {
   const h = withHandle(scrollHarness(spaceList(["a", "b", "c", "d"], "c")));
   h.view.render();
-  expect(h.view.scroll.calls).toEqual([2]);
+  expect(h.view.scroll.calls).toEqual([5]); // each space sits under a project header
   expect(h.tracked).toEqual([h.view.scroll]); // the list is the area that handle scrolls
   h.view.render();
   h.view.render();
-  expect(h.view.scroll.calls).toEqual([2]);
+  expect(h.view.scroll.calls).toEqual([5]);
   h.snapshot.forEach(s => { s.active = s.id === "a"; });
   h.view.render();
-  expect(h.view.scroll.calls).toEqual([2, 0]);
+  expect(h.view.scroll.calls).toEqual([5, 1]);
 });
 
 test("the active space's place counts a remote machine's header and rows", () => {
   const ids = ["a", "b", "r1", "r2"];
   const h = withHandle(scrollHarness(spaceList(ids, "r2", ["r1", "r2"])));
   h.view.render();
-  // children: this computer's header, a, b, cloud's header, r1, r2
-  expect(h.view.scroll.calls).toEqual([5]);
+  // children: this computer's header, then per space a project header and its row (a, b), cloud's header, r1, r2
+  expect(h.view.scroll.calls).toEqual([9]);
 });
 
 test("a folded machine's active space has no row to reveal", () => {
@@ -517,12 +518,12 @@ test("the list reveals the active space again when its own size changes, and onl
   let notified = 0;
   h.cx.notify = () => { notified++; };
   h.view.render();
-  expect(h.view.scroll.calls).toEqual([3]);
+  expect(h.view.scroll.calls).toEqual([7]);
   h.handlers.on_size_change({ width: 200, height: 60 }, h.cx);
-  expect(h.view.scroll.calls).toEqual([3, 3]);
+  expect(h.view.scroll.calls).toEqual([7, 7]);
   expect(notified).toBe(1);
   h.view.render();
-  expect(h.view.scroll.calls).toEqual([3, 3]);
+  expect(h.view.scroll.calls).toEqual([7, 7]);
 });
 
 test("a size change with no active row drawn asks for nothing", () => {
@@ -536,13 +537,31 @@ test("a size change with no active row drawn asks for nothing", () => {
 test("the list reveals the active space again when a machine header shifts its place", () => {
   const h = withHandle(scrollHarness(spaceList(["a", "b", "c", "d"], "b")));
   h.view.render();
-  expect(h.view.scroll.calls).toEqual([1]);
+  expect(h.view.scroll.calls).toEqual([3]);
   // A machine joins: its header and rows come after this computer's, and now this computer gets a header too,
   // so the same active space sits one child further down.
   h.snapshot.push({ id: "r1", folder: "/r1", machine: "cloud", active: false });
   h.view.shown.add("r1");
   h.view.render();
-  expect(h.view.scroll.calls).toEqual([1, 2]);
+  expect(h.view.scroll.calls).toEqual([3, 4]);
   h.view.render();
-  expect(h.view.scroll.calls).toEqual([1, 2]);
+  expect(h.view.scroll.calls).toEqual([3, 4]);
+});
+
+test("a space with agents draws its row with its agents under it, in a project", () => {
+  const h = harness();
+  h.env.agents = [
+    { address: "a", pane: "p1", space: "s1", status: "working", title: "claude", program: { name: "Claude", icon: "i.svg", tint: true }, focused: false },
+    { address: "b", pane: "p2", space: "s1", status: "blocked", title: "", program: { name: "Codex", icon: null, tint: false }, focused: true },
+  ];
+  h.view.pressed = null;
+  const row = { w: { id: "s1", name: "api", active: false }, i: 0, g: null, tree: null };
+  const t = new Proxy({}, { get: () => "#000000" });
+  expect(() => h.view.withAgents(row, t)).not.toThrow();
+  // Spaces of one repo share a project header; another repo gets its own. The active space's index counts the headers.
+  const mk = (id, repo, active = false) => ({ w: { id, name: id, folder: `/x/${repo}`, active, tabs: [] }, i: 0, g: { repo, name: repo }, tree: null });
+  const out = h.view.projects([mk("a", "r1"), mk("b", "r1"), mk("c", "r2", true)], t, false, () => null);
+  expect(out.items).toHaveLength(5);
+  expect(out.active).toBe(4);
+  expect(h.view.projects([mk("a", "r1", true)], t, true, () => "x").active).toBe(0);
 });

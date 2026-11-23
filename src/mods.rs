@@ -57,11 +57,48 @@ pub fn note_fonts(cx: &gpui::App) {
     *FONTS.lock().unwrap() = names;
 }
 
-/// The app's home: `$HERDR_APP_HOME` (tests, experiments), else
-/// `$XDG_CONFIG_HOME/herdr-app`, else `~/.config/herdr-app`, on every OS.
+/// The app's home: `$SUNNA_HOME` (or the older `$HERDR_APP_HOME`; tests,
+/// experiments), else `$XDG_CONFIG_HOME/sunna`, else `~/.config/sunna`, on
+/// every OS. The first start copies a `herdr-app` home there (see `migrate_home`).
 pub fn app_dir() -> PathBuf {
     let env = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from);
-    env("HERDR_APP_HOME").unwrap_or_else(|| env("XDG_CONFIG_HOME").unwrap_or_else(|| home().join(".config")).join("herdr-app"))
+    if let Some(dir) = env("SUNNA_HOME").or_else(|| env("HERDR_APP_HOME")) {
+        return dir;
+    }
+    let config = env("XDG_CONFIG_HOME").unwrap_or_else(|| home().join(".config"));
+    static MIGRATED: std::sync::Once = std::sync::Once::new();
+    MIGRATED.call_once(|| migrate_home(&config.join("herdr-app"), &config.join("sunna")));
+    config.join("sunna")
+}
+
+/// Copies the home an earlier version (named herdr-app) left, once: unless the new
+/// one already has settings or says it was migrated. The old folder stays, so an
+/// older install keeps working. Runtime files (sockets, pids, locks) are not
+/// copied, links are followed, files already there are kept, and one unreadable
+/// file is skipped rather than failing the whole copy.
+fn migrate_home(old: &Path, new: &Path) {
+    fn copy(from: &Path, to: &Path) -> std::io::Result<()> {
+        std::fs::create_dir_all(to)?;
+        for entry in std::fs::read_dir(from)? {
+            let entry = entry?;
+            let (src, dst) = (entry.path(), to.join(entry.file_name()));
+            if src.is_dir() {
+                copy(&src, &dst)?;
+            } else if src.is_file() && !dst.exists() && src.extension().is_none_or(|e| !["sock", "pid", "lock"].contains(&e.to_str().unwrap_or("")))
+                && let Err(e) = std::fs::copy(&src, &dst) {
+                    eprintln!("sunna: skipped {}: {e}", src.display());
+                }
+        }
+        Ok(())
+    }
+    let marker = new.join(".migrated");
+    if !old.is_dir() || marker.exists() || new.join("settings.json").exists() {
+        return;
+    }
+    match copy(old, new) {
+        Ok(()) => { let _ = std::fs::write(&marker, ""); }
+        Err(e) => eprintln!("sunna: cannot copy {} to {}: {e}", old.display(), new.display()),
+    }
 }
 
 pub fn mods_dir() -> PathBuf {
@@ -943,7 +980,7 @@ fn read_remote(machine: &str, path: &str) -> Result<Option<String>, String> {
         return Ok(None);
     }
     if out.len() as u64 > crate::mod_files::LIMIT {
-        return Err(crate::i18n::t("rs.mods.text_file_exceeds_1_mib").into());
+        return Err(crate::i18n::t("rs.mods.text_file_exceeds_1_mib"));
     }
     Ok(Some(String::from_utf8_lossy(&out).into_owned()))
 }
@@ -1093,7 +1130,7 @@ fn module(inst: Instance, copy: u64) -> HostModule {
             })
         })
         .function("themes", |_| {
-            let list: Vec<Value> = crate::settings::themes().into_iter().map(|(name, colors)| json!({ "light": crate::settings::theme_is_light(&name), "name": name, "colors": colors })).collect();
+            let list: Vec<Value> = crate::settings::themes().into_iter().map(|(name, colors, style, shipped)| json!({ "light": crate::settings::theme_is_light(&name), "name": name, "colors": colors, "style": style, "shipped": shipped })).collect();
             Ok(to_host(&Value::Array(list)))
         })
         .function("playSound", |a| {
@@ -1156,6 +1193,14 @@ fn module(inst: Instance, copy: u64) -> HostModule {
         })
         .function("window", reader(reads.clone(), "window", |s| &s.window))
         .function("theme", |_| Ok(to_host(&serde_json::to_value(&*crate::settings::theme()).unwrap_or(Value::Null))))
+        .function("style", |_| {
+            let st = crate::settings::style();
+            Ok(to_host(&json!({
+                "radius": st.radius.unwrap_or(6.0), "pane_radius": st.pane_radius, "pane_gap": st.pane_gap,
+                "border_width": st.border_width, "shadow": st.shadow, "font": st.font,
+                "font_size": st.font_size, "ui_font": st.ui_font,
+            })))
+        })
         .function("settings", |_| Ok(to_host(&serde_json::to_value(&*crate::settings::get()).unwrap_or(Value::Null))))
         .function("tr", |a| {
             let key = a.string(0)?;
@@ -1753,5 +1798,43 @@ mod tests {
         assert_eq!(read("d/notes.md"), "my notes", "a dropped default with an added file stays");
 
         std::fs::remove_dir_all(&root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod migrate_tests {
+    use super::migrate_home;
+
+    #[test]
+    fn an_old_home_is_copied_once_and_left_in_place() {
+        let root = std::env::temp_dir().join(format!("sunna-migrate-{}", std::process::id()));
+        let (old, new) = (root.join("herdr-app"), root.join("sunna"));
+        std::fs::create_dir_all(old.join("mods/a")).unwrap();
+        std::fs::write(old.join("settings.json"), "{}").unwrap();
+        std::fs::write(old.join("mods/a/main.js"), "x").unwrap();
+        std::fs::write(old.join("herdr-app.sock"), "").unwrap();
+        migrate_home(&old, &new);
+        assert_eq!(std::fs::read_to_string(new.join("mods/a/main.js")).unwrap(), "x");
+        assert!(new.join("settings.json").is_file() && old.join("settings.json").is_file());
+        assert!(!new.join("herdr-app.sock").exists());
+        // The new home is the person's now: a second start doesn't touch it.
+        std::fs::write(new.join("settings.json"), "{\"zoom\":2}").unwrap();
+        migrate_home(&old, &new);
+        assert_eq!(std::fs::read_to_string(new.join("settings.json")).unwrap(), "{\"zoom\":2}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_new_home_that_already_exists_still_gets_the_old_settings() {
+        let root = std::env::temp_dir().join(format!("sunna-migrate-existing-{}", std::process::id()));
+        let (old, new) = (root.join("herdr-app"), root.join("sunna"));
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::create_dir_all(new.join("mods")).unwrap(); // made by something else first
+        std::fs::write(old.join("settings.json"), "{\"zoom\":3}").unwrap();
+        std::fs::write(old.join("run.pid"), "1").unwrap();
+        migrate_home(&old, &new);
+        assert_eq!(std::fs::read_to_string(new.join("settings.json")).unwrap(), "{\"zoom\":3}");
+        assert!(!new.join("run.pid").exists());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

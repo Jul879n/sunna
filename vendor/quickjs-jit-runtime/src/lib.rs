@@ -1384,6 +1384,7 @@ const fn is_generated_osr_retry(pc: u32, exit_kind: u32, validation_retry: bool)
 }
 
 #[cfg(all(feature = "compiler", not(target_family = "wasm")))]
+#[allow(dead_code)] // kept for the stress-GC test configuration
 fn apply_stress_gc_after_validation(
     frame: &mut rquickjs_core::qjs::JSJitExecFrame,
     stress_gc: bool,

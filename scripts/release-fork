@@ -10,7 +10,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-repo=Jul879n/herdr-app
+repo=Jul879n/sunna
 publish=0
 case "${1:-}" in
   "") ;;

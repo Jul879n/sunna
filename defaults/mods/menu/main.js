@@ -5,7 +5,10 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { run, props, closeOverlay, openOverlay, theme, keys, terminals, spaces, panes, exec, tr } from "herdr";
+import { run, props, closeOverlay, openOverlay, theme, keys, terminals, spaces, panes, exec, tr, style } from "herdr";
+
+// Radius scale: the theme's `style.radius` (6 = the original sizes).
+const R = (n) => Math.round(n * style().radius / 6);
 
 // Where a space is now: its first terminal's live folder, else where it was made.
 function place(s) {
@@ -144,7 +147,7 @@ export default class Menu extends View {
             .h(31)
             .px(8)
             .gap(9)
-            .rounded(7)
+            .rounded(R(7))
             .items_center()
             .justify_between()
             .text_color(t.foreground)

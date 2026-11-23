@@ -110,7 +110,7 @@ impl AppWindow {
         Value::Object(out)
     }
 
-    /// Placements plus where each sits in the window (px), for `herdr-app status`.
+    /// Placements plus where each sits in the window (px), for `sunna status`.
     pub(super) fn float_status(&self) -> Value {
         let mut v = self.float_placements();
         let bounds = self.bounds.borrow();
@@ -158,7 +158,7 @@ impl AppWindow {
         // A drawer: the content keeps its full size; the box shows `peek` px of
         // it next to the edge, more as it opens.
         let natural = self.bounds.borrow().get(&content_slot(&f.id)).map(|b| b.size);
-        let peek = f.peek.filter(|_| edge.vertical()).map(|p| settings::z(p));
+        let peek = f.peek.filter(|_| edge.vertical()).map(settings::z);
         let open = self.float_reveal.get(&f.id).map_or(0.0, Reveal::now);
         let cut = match (peek, natural) {
             (Some(p), Some(n)) if p < n.width => Some(size(p + (n.width - p) * open, n.height)),

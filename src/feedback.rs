@@ -52,7 +52,7 @@ pub fn attach(bytes: &[u8]) -> Result<String, String> {
             (png.into_inner(), "png")
         }
     };
-    if bytes.len() > MAX_IMAGE_BYTES { return Err(crate::i18n::t("rs.feedback.that_image_is_over_5").into()); }
+    if bytes.len() > MAX_IMAGE_BYTES { return Err(crate::i18n::t("rs.feedback.that_image_is_over_5")); }
     let dir = shots_dir();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or_default();
@@ -96,15 +96,15 @@ pub fn available() -> bool { endpoint().is_some() }
 
 fn validate(body: &Value) -> Result<(), String> {
     let message = body["message"].as_str().unwrap_or_default();
-    if message.is_empty() { return Err(crate::i18n::t("rs.feedback.write_a_message_first").into()); }
-    if message.encode_utf16().count() > 4000 { return Err(crate::i18n::t("rs.feedback.keep_the_message_to_4000").into()); }
+    if message.is_empty() { return Err(crate::i18n::t("rs.feedback.write_a_message_first")); }
+    if message.encode_utf16().count() > 4000 { return Err(crate::i18n::t("rs.feedback.keep_the_message_to_4000")); }
     if let Some(email) = body["email"].as_str() {
         let valid = email.split_once('@').is_some_and(|(local, domain)| {
             !local.is_empty() && domain.split_once('.').is_some_and(|(a, b)| !a.is_empty() && !b.is_empty())
                 && !domain.contains('@')
         });
         if email.len() > 254 || !valid || email.chars().any(char::is_whitespace) {
-            return Err(crate::i18n::t("rs.feedback.enter_a_plain_email_address").into());
+            return Err(crate::i18n::t("rs.feedback.enter_a_plain_email_address"));
         }
     }
     Ok(())
@@ -113,7 +113,7 @@ fn validate(body: &Value) -> Result<(), String> {
 pub async fn send(body: Value, shots: Vec<String>) -> Result<(), String> {
     validate(&body)?;
     if shots.len() > MAX_IMAGES || body["images"].as_u64() != Some(shots.len() as u64) {
-        return Err(crate::i18n::t("rs.feedback.up_to_3_screenshots").into());
+        return Err(crate::i18n::t("rs.feedback.up_to_3_screenshots"));
     }
     let files = shots.iter().map(|s| shot_file(s)).collect::<Result<Vec<_>, _>>()?;
     let url = endpoint().ok_or_else(|| crate::i18n::t("rs.feedback.this_build_was_made_from"))?;
@@ -156,11 +156,11 @@ fn post(url: &str, body: &str, files: &[PathBuf]) -> Result<(), String> {
     if !out.status.success() { return Err(network()); }
     match String::from_utf8_lossy(&out.stdout).trim() {
         "204" => Ok(()),
-        "429" => Err(crate::i18n::t("rs.feedback.too_many_try_in_a").into()),
-        "503" => Err(crate::i18n::t("rs.feedback.not_taking_feedback_right_now").into()),
-        "400" => Err(crate::i18n::t("rs.feedback.the_server_couldn_t_accept_this").into()),
-        "413" => Err(crate::i18n::t("rs.feedback.the_feedback_is_too_large").into()),
-        _ => Err(crate::i18n::t("rs.feedback.the_feedback_server_returned_an").into()),
+        "429" => Err(crate::i18n::t("rs.feedback.too_many_try_in_a")),
+        "503" => Err(crate::i18n::t("rs.feedback.not_taking_feedback_right_now")),
+        "400" => Err(crate::i18n::t("rs.feedback.the_server_couldn_t_accept_this")),
+        "413" => Err(crate::i18n::t("rs.feedback.the_feedback_is_too_large")),
+        _ => Err(crate::i18n::t("rs.feedback.the_feedback_server_returned_an")),
     }
 }
 

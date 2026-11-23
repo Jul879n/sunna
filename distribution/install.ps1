@@ -2,8 +2,8 @@
 #
 #   powershell -c "irm https://releases.herdr.dev/app/install.ps1 | iex"
 #
-# The app into %LOCALAPPDATA%\Programs\herdr-app (added to your PATH for
-# `herdr-app`), Herdr in the Start menu. The core, with its own installer,
+# The app into %LOCALAPPDATA%\Programs\sunna (added to your PATH for
+# `sunna`), Herdr in the Start menu. The core, with its own installer,
 # only if none is there yet; the app keeps it current after that. Running it
 # again updates the app (an open one keeps running until it quits). No admin
 # needed. HERDR_RELEASES_URL points elsewhere (tests).
@@ -17,7 +17,7 @@ $ProgressPreference = "SilentlyContinue"
 function Fail($why) { throw "herdr: $why" }
 
 $releases = if ($env:HERDR_RELEASES_URL) { $env:HERDR_RELEASES_URL.TrimEnd("/") } else { "https://releases.herdr.dev" }
-$dir = Join-Path $env:LOCALAPPDATA "Programs\herdr-app"
+$dir = Join-Path $env:LOCALAPPDATA "Programs\sunna"
 $arch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
 if ($arch -ne "AMD64") { Fail "no build for $arch Windows yet (x64 only)" }
 $target = "windows-x86_64"
@@ -52,17 +52,17 @@ try {
     try { $got = -join ([Security.Cryptography.SHA256]::Create().ComputeHash($stream) | ForEach-Object { $_.ToString("x2") }) } finally { $stream.Close() }
     if ($got -ne $t.sha256) { Fail "the download is damaged (checksum mismatch); try again" }
     & $tar -xzf "$tmp\app.tar.gz" -C $tmp
-    if ($LASTEXITCODE -or -not (Test-Path "$tmp\herdr-app\herdr-app.exe")) { Fail "the download holds no complete app" }
+    if ($LASTEXITCODE -or -not (Test-Path "$tmp\sunna\sunna.exe")) { Fail "the download holds no complete app" }
 
     # A running app's folder can be renamed, not deleted: the old one goes
     # now if it can, else on the next install.
     New-Item -ItemType Directory -Force (Split-Path $dir) | Out-Null
     Remove-Item -Recurse -Force "$dir.old" -ErrorAction SilentlyContinue
     if (Test-Path $dir) { Rename-Item $dir "$dir.old" }
-    Move-Item "$tmp\herdr-app" $dir
+    Move-Item "$tmp\sunna" $dir
     Remove-Item -Recurse -Force "$dir.old" -ErrorAction SilentlyContinue
 
-    $exe = Join-Path $dir "herdr-app.exe"
+    $exe = Join-Path $dir "sunna.exe"
     $menu = Join-Path ([Environment]::GetFolderPath("Programs")) "Herdr.lnk"
     $link = (New-Object -ComObject WScript.Shell).CreateShortcut($menu)
     $link.TargetPath = $exe
@@ -96,7 +96,7 @@ try {
         }
     }
 
-    Write-Host "Herdr is installed. Open it from the Start menu, or run: herdr-app"
+    Write-Host "Herdr is installed. Open it from the Start menu, or run: sunna"
 } finally {
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 }

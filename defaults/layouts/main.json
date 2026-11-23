@@ -52,17 +52,6 @@
               "content": {
                 "mod": "spaces"
               }
-            },
-            {
-              "id": "agents",
-              "type": "block",
-              "size": {
-                "weight": 1
-              },
-              "min": 90,
-              "content": {
-                "mod": "agents"
-              }
             }
           ]
         },
@@ -159,6 +148,20 @@
                       "type": "block",
                       "content": {
                         "mod": "changes"
+                      }
+                    },
+                    {
+                      "id": "search",
+                      "type": "block",
+                      "content": {
+                        "mod": "search"
+                      }
+                    },
+                    {
+                      "id": "bots",
+                      "type": "block",
+                      "content": {
+                        "mod": "bots"
                       }
                     }
                   ]

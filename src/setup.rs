@@ -5,6 +5,7 @@
 //! - too old (or missing a method the app calls): update it (`hc update`,
 //!   terminals kept);
 //! - a newer generation than this app speaks: update the app.
+//!
 //! Then the main window opens.
 
 use crate::hc::{Core, Mismatch};
@@ -42,24 +43,6 @@ impl Need {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::Need;
-
-    #[test]
-    fn unreadable_core_connections_offer_installation_instead_of_retry() {
-        let error = anyhow::anyhow!("bad hello reply from core: EOF");
-        assert!(matches!(Need::connection(error), Need::Install));
-    }
-
-    #[test]
-    fn structured_core_errors_keep_the_recovery_hint_and_retry() {
-        let message = "the core pipe cannot be accessed\n\ntry again without elevation";
-        let error = anyhow::Error::new(crate::hc::ConnectError(message.into())).context("connecting");
-        assert!(matches!(Need::connection(error), Need::Connect(text) if text == message));
-    }
-}
-
 enum State {
     Ready,
     Busy(String),
@@ -76,7 +59,7 @@ pub struct Setup {
 pub fn open(need: Need, requests: async_channel::Receiver<Request>, cx: &mut App) {
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size(px(620.0), px(460.0)), cx))),
-        titlebar: Some(TitlebarOptions { title: Some("Herdr".into()), ..Default::default() }),
+        titlebar: Some(TitlebarOptions { title: Some("Sunna".into()), ..Default::default() }),
         app_id: Some("herdr-app".into()),
         ..Default::default()
     };
@@ -167,27 +150,27 @@ impl Setup {
     fn words(&self) -> (String, String, String) {
         match &self.need {
             Need::Install => (
-                crate::i18n::t("rs.setup.herdr_needs_herdr_core").into(),
-                crate::i18n::t("rs.setup.herdr_core_runs_your_terminals_and").into(),
+                crate::i18n::t("rs.setup.herdr_needs_herdr_core"),
+                crate::i18n::t("rs.setup.herdr_core_runs_your_terminals_and"),
                 crate::i18n::tf("rs.setup.install_it_for_me_puts", &[("place", CORE_PLACE), ("install", CORE_INSTALL)]),
             ),
             Need::Connect(error) => (
-                crate::i18n::t("rs.setup.herdr_can_t_connect_to_herdr_core").into(),
+                crate::i18n::t("rs.setup.herdr_can_t_connect_to_herdr_core"),
                 error.clone(),
-                crate::i18n::t("rs.setup.once_you_ve_resolved_this_try").into(),
+                crate::i18n::t("rs.setup.once_you_ve_resolved_this_try"),
             ),
             Need::Fix(Mismatch::TooOld { have, need }) => (
-                crate::i18n::t("rs.setup.herdr_needs_a_newer_herdr_core").into(),
+                crate::i18n::t("rs.setup.herdr_needs_a_newer_herdr_core"),
                 crate::i18n::tf("rs.setup.yours_is_have_this_herdr", &[("have", &have.to_string()), ("need", &need.to_string())]),
-                crate::i18n::t("rs.setup.or_update_it_yourself_hc").into(),
+                crate::i18n::t("rs.setup.or_update_it_yourself_hc"),
             ),
             Need::Fix(Mismatch::Missing(methods)) => (
-                crate::i18n::t("rs.setup.herdr_needs_a_newer_herdr_core").into(),
+                crate::i18n::t("rs.setup.herdr_needs_a_newer_herdr_core"),
                 crate::i18n::tf("rs.setup.your_herdr_core_can_t_do_everything", &[("methods", &methods.join(", "))]),
-                crate::i18n::t("rs.setup.or_update_it_yourself_hc").into(),
+                crate::i18n::t("rs.setup.or_update_it_yourself_hc"),
             ),
             Need::Fix(Mismatch::Newer { generation }) => (
-                crate::i18n::t("rs.setup.this_herdr_is_older_than").into(),
+                crate::i18n::t("rs.setup.this_herdr_is_older_than"),
                 crate::i18n::tf("rs.setup.your_herdr_core_speaks_a_newer", &[("generation", &generation.to_string())]),
                 crate::i18n::tf("rs.setup.update_herdr_install", &[("install", APP_INSTALL)]),
             ),
@@ -262,5 +245,23 @@ impl Render for Setup {
                         State::Failed(e) => div().text_size(px(13.0)).text_color(c("blocked")).child(e.clone()),
                     }),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Need;
+
+    #[test]
+    fn unreadable_core_connections_offer_installation_instead_of_retry() {
+        let error = anyhow::anyhow!("bad hello reply from core: EOF");
+        assert!(matches!(Need::connection(error), Need::Install));
+    }
+
+    #[test]
+    fn structured_core_errors_keep_the_recovery_hint_and_retry() {
+        let message = "the core pipe cannot be accessed\n\ntry again without elevation";
+        let error = anyhow::Error::new(crate::hc::ConnectError(message.into())).context("connecting");
+        assert!(matches!(Need::connection(error), Need::Connect(text) if text == message));
     }
 }

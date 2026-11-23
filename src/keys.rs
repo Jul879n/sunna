@@ -1,4 +1,4 @@
-//! ~/.config/herdr-app/keys.json: string or object actions, reloaded live.
+//! ~/.config/sunna/keys.json: string or object actions, reloaded live.
 //!
 //! ```json
 //! {
@@ -328,7 +328,7 @@ mod tests {
                 unshifted_key: Some(base.into()),
                 ..Keystroke::parse(&format!("cmd-{shifted}")).unwrap()
             };
-            assert!(bindings.iter().any(|binding| binding.match_keystrokes(&[event.clone()]) == Some(false)));
+            assert!(bindings.iter().any(|binding| binding.match_keystrokes(std::slice::from_ref(&event)) == Some(false)));
         }
         // Layout-derived aliases, not a US punctuation lookup table.
         for (base, shifted) in [("=", "+"), ("-", "_"), ("ö", "Ö"), ("č", "Č"), ("7", "/")] {

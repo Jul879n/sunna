@@ -68,7 +68,7 @@ fn mod_text_selection_stays_in_its_shell_root(cx: &mut TestAppContext) {
         cx.simulate_mouse_move(end, Some(MouseButton::Left), Modifiers::default());
         cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::default());
         cx.run_until_parked();
-        let copied = cx.update(|window, cx| TextSelection::selected_text(window, cx));
+        let copied = cx.update(TextSelection::selected_text);
         assert!(copied.contains("CENTER first block"), "{copied:?}");
         assert!(copied.contains("CENTER middle block"), "end {end:?}: {copied:?}");
         assert!(copied.contains("CENTER second block"), "end {end:?}: {copied:?}");
@@ -77,7 +77,7 @@ fn mod_text_selection_stays_in_its_shell_root(cx: &mut TestAppContext) {
             assert!(copied.contains("CENTER plain text"), "{copied:?}");
         }
         cx.simulate_mouse_move(neighbor.center(), None, Modifiers::default());
-        assert_eq!(cx.update(|window, cx| TextSelection::selected_text(window, cx)), copied);
+        assert_eq!(cx.update(TextSelection::selected_text), copied);
     }
 }
 
@@ -153,8 +153,9 @@ fn fixture(populated: bool, props: Value, update: Value) -> BTreeMap<String, Val
         ("layout".into(), serde_json::from_str(include_str!("../../defaults/layouts/main.json")).unwrap()),
         ("layouts".into(), json!(crate::window::shipped_layouts())),
         ("theme".into(), serde_json::to_value(&*crate::settings::theme()).unwrap()),
+        ("style".into(), json!({"radius":6,"pane_radius":null,"pane_gap":null,"border_width":null,"shadow":null,"font":null,"font_size":null,"ui_font":null})),
         ("settings".into(), serde_json::to_value(crate::settings::Settings::default()).unwrap()),
-        ("themes".into(), json!([{"name":"graphite", "colors": &*crate::settings::theme()}])),  ("fonts".into(), json!(["Monospace", "Sans"])),
+        ("themes".into(), json!([{"name":"graphite", "colors": &*crate::settings::theme(), "style": {}, "shipped": true}])),  ("fonts".into(), json!(["Monospace", "Sans"])),
         ("updates".into(), update),
         ("telemetry".into(), json!({"enabled":true,"setting":true,"sends":true,"off_because":null,"endpoint":"https://invalid.example", "draft":{},"queued":[],"last_sent":null})),
         ("window".into(), json!({"platform":"linux","titlebar":"none","buttons":true,"maximized":false,"fullscreen":false,"active":true})),
@@ -241,6 +242,8 @@ fn module(values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> HostMod
             let first = a.get(0).map(from_host).unwrap_or(Value::Null);
             let reply = match name {
                 "readTextFile" if first == "/fixture/app/settings.json" || first == "/fixture/.ssh/config" => Some(Value::Null),
+                // The tab bar reads each panel's title and icon from its mod.json.
+                "readTextFile" if first.as_str().is_some_and(|p| p.starts_with("/fixture/app/mods/") && p.ends_with("/mod.json")) => Some(Value::Null),
                 "readTextFile" => first
                     .as_str()
                     .and_then(|p| p.strip_prefix("/fixture/app/layouts/"))
@@ -605,7 +608,7 @@ impl gpui::Render for RootedView {
 
 #[gpui::test]
 fn a_mod_hears_a_pinch_only_over_its_element(cx: &mut TestAppContext) {
-    use gpui::{AppContext as _, Modifiers, PinchEvent, TouchPhase, VisualTestContext, point, px};
+    use gpui::{Modifiers, PinchEvent, TouchPhase, VisualTestContext, point, px};
 
     cx.update(gpui_shell::init);
     let staged = Staged::new();
@@ -665,7 +668,7 @@ fn long_theme_names_stay_inside_their_card(cx: &mut TestAppContext) {
     p["section"] = json!("look");
     let mut values = fixture(true, p, updates("current", "current"));
     let theme = values["theme"].clone();
-    values.insert("themes".into(), json!([{ "name": long, "light": false, "colors": theme }]));
+    values.insert("themes".into(), json!([{ "name": long, "light": false, "colors": theme, "style": {}, "shipped": true }]));
     let mut settings = values["settings"].clone();
     settings["theme_dark"] = json!(long);
     values.insert("settings".into(), settings);
@@ -673,7 +676,7 @@ fn long_theme_names_stay_inside_their_card(cx: &mut TestAppContext) {
     let lines: Vec<&str> = tree.lines().collect();
     let card = lines.iter().position(|l| l.contains(&format!("st-t-{long}"))).unwrap();
     let row = lines[card..].iter().find(|l| l.trim_start().starts_with("h_flex") && l.contains("min_w")).unwrap();
-    assert!(row.contains(".w_full"), "the name row must fill the card: {row}");
+    assert!(row.contains(".w[Number(132.0)]"), "the name row must be as wide as the card's picture: {row}");
     assert!(row.contains(".min_w[Number(0.0)]"), "the name row must be allowed to shrink: {row}");
     let name = lines[card..].iter().find(|l| l.contains("truncate")).unwrap();
     assert!(name.contains(":tooltip[Str(\"catppuccin macchiato\")]"), "a cut name needs its full text on hover: {name}");
@@ -783,13 +786,7 @@ fn long_space_names_use_the_sidebar_width(cx: &mut TestAppContext) {
     let label = lines[text - 1];
     assert!(!label.contains(".max_w"), "a wider sidebar must show more of the name: {label}");
     assert!(!label.contains(".flex_shrink[Number(0.0)]"), "the name must give way when the row is full: {label}");
-    assert!(label.contains(".min_w[Number(48.0)]"), "the name shrinks, but a short one stays readable: {label}");
-    let tail = lines[text + 1..].iter().find(|l| l.contains(".justify_end")).unwrap();
-    assert!(tail.contains(".flex_auto") && !tail.contains(".flex_1"), "the git tail must start from its text's width, so both sides give way in proportion: {tail}");
-    assert!(tail.contains(".min_w[Number(48.0)]"), "the git tail shrinks, but a short one stays readable: {tail}");
-    let remote = lines.iter().position(|l| l.contains("text \"Remote\"")).unwrap();
-    let empty = lines[remote + 1..].iter().find(|l| l.contains(".justify_end")).unwrap();
-    assert!(empty.contains(".min_w[Number(0.0)]"), "an empty git tail must not take room from the name: {empty}");
+    assert!(label.contains(".flex_1") && label.contains(".min_w[Number(0.0)]"), "the name takes the row's width and gives way to the age: {label}");
     let icon = lines.iter().find(|l| l.contains("branch.svg")).expect("the worktree space is nested");
     assert!(icon.contains(".flex_none"), "a worktree's icon keeps its size while the name gives way: {icon}");
 }
@@ -893,7 +890,7 @@ fn settings_sections_and_updates(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let start = Instant::now();
     let staged = Staged::new();
-    for section in ["look", "general", "agents", "keyboard", "alerts", "privacy", "updates"] {
+    for section in ["look", "mods", "general", "agents", "keyboard", "alerts", "privacy", "updates"] {
         let mut p = props();
         p["section"] = json!(section);
         describe(cx, &staged, "frame/settings", true, p, updates("current", "current"), None).unwrap();
@@ -1060,7 +1057,7 @@ fn local_state_and_overlay_initial_descriptions(cx: &mut TestAppContext) {
             Some(&format!("this.page = {page};")),
         )
         .unwrap();
-        let expected = ["Herdr runs your terminals in the background", "Add your other machines", "Choose your panels", "Make it yours"][page - 1];
+        let expected = ["Sunna runs your terminals in the background", "Add your other machines", "Choose your panels", "Make it yours"][page - 1];
         assert!(tree.contains(expected), "welcome page {page}: {tree}");
     }
     for setup in ["", "this.sent = true;", "this.error = 'Fixture error';"] {

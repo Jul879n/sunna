@@ -35,6 +35,11 @@ pub fn resolve(language: Option<&str>) -> &'static str {
     if cfg!(test) {
         return "en";
     }
+    // macOS: an app started from Finder has no LANG; the system's choice is in AppleLanguages.
+    #[cfg(target_os = "macos")]
+    if let Some(es) = macos_prefers_spanish() {
+        return if es { "es" } else { "en" };
+    }
     for var in ["LC_ALL", "LC_MESSAGES", "LANG"] {
         if let Ok(v) = std::env::var(var)
             && !v.is_empty()
@@ -43,6 +48,18 @@ pub fn resolve(language: Option<&str>) -> &'static str {
         }
     }
     "en"
+}
+
+/// Whether the first language in the system's list is Spanish (`defaults read -g AppleLanguages`), asked once.
+#[cfg(target_os = "macos")]
+fn macos_prefers_spanish() -> Option<bool> {
+    static ANSWER: OnceLock<Option<bool>> = OnceLock::new();
+    *ANSWER.get_or_init(|| {
+        let out = crate::spawn::command("defaults").args(["read", "-g", "AppleLanguages"]).output().ok()?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        let first = text.split('"').nth(1).or_else(|| text.lines().nth(1).map(str::trim))?;
+        Some(first.starts_with("es"))
+    })
 }
 
 pub fn set(locale: &str) {
