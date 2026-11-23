@@ -85,7 +85,7 @@ function entries() {
     .filter(([n]) => !(mac && n.startsWith("window.")))
     .map(([name, args, group, title, words]) => ({ name, args, group: tr(group), title: typeof title === "function" ? title() : tr(title), words }));
   for (const l of layouts()) {
-    const t = { main: "Herdr", terminals: "Terminals", win98: "Herdr 98" }[l] ?? l.charAt(0).toUpperCase() + l.slice(1);
+    const t = { main: "Sunna", terminals: "Terminals", win98: "Herdr 98" }[l] ?? l.charAt(0).toUpperCase() + l.slice(1);
     list.push({ name: "layout.switch", args: { name: l }, group: tr("palette.layout"), title: tr("palette.layout_name", { name: t }), words: `look layout diseño ${l}` });
   }
   // Anything new in the app shows up too, until it gets a better name here.

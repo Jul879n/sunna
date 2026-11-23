@@ -1982,6 +1982,7 @@ pub struct RelocatableCode {
     target: Triple,
     host_publishable: bool,
     clif: String,
+    #[allow(dead_code)] // carried for diagnostics, read only by tests
     machine_disassembly: Option<String>,
     osr_codes: Vec<(crate::runtime::OsrMap, RelocatableCode)>,
 }

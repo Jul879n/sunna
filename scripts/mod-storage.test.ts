@@ -13,7 +13,7 @@ async function harness(mod: string, values: Record<string, string>) {
   const Mod = new Function(...Object.keys(globals), `${source}; return ${name};`)(...Object.values(globals));
   const view = new Mod();
   view.refreshMachines = () => {};
-  view.init({}, { timer: { every() {} } });
+  view.init({}, { timer: { every() {} }, spawn() {} });
   return { view, data };
 }
 

@@ -7,7 +7,7 @@
 #
 #   scripts/sandbox up            build, start the display, the core and the window
 #   scripts/sandbox restart       rebuild and restart the window (terminals live on)
-#   scripts/sandbox do <action> [json]   / status   drive it (herdr-app do / status)
+#   scripts/sandbox do <action> [json]   / status   drive it (sunna do / status)
 #   scripts/sandbox shot [file]   screenshot of the window
 #   scripts/sandbox move|click|drag|type|key|hold|release ...   fake input (window px, see sandbox-input.py)
 #   scripts/sandbox log           the window's log
@@ -15,15 +15,15 @@
 #   scripts/sandbox hc <args>     hc against the sandbox core
 #   scripts/sandbox down          stop everything and delete it
 #
-# HERDR_APP_SANDBOX=<name> runs a second one side by side. HERDR_APP_BIN runs
-# another herdr-app (an installed copy, to try updates) instead of this build.
+# HERDR_APP_SANDBOX=<name> runs a second one side by side. SUNNA_BIN runs
+# another sunna (an installed copy, to try updates) instead of this build.
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
 name=${HERDR_APP_SANDBOX:-sandbox}
-root=/var/tmp/herdr-app-$name
-bin=${HERDR_APP_BIN:-$here/../target/debug/herdr-app}
-export HC_SESSION=herdr-app-$name HERDR_APP_HOME=$root/home
+root=/var/tmp/sunna-$name
+bin=${SUNNA_BIN:-$here/../target/debug/sunna}
+export HC_SESSION=sunna-$name SUNNA_HOME=$root/home
 # The core's state (machines, terminals) lives and dies with the sandbox:
 # a machine added in one run must not follow the next one there.
 export XDG_STATE_HOME=$root/state
@@ -33,13 +33,13 @@ export HERDR_APP_NO_SOUND=1
 # The private X display, once started (Weston picks the number).
 if [[ -f $root/display ]]; then export DISPLAY=$(cat "$root/display"); fi
 
-ours() { { tr '\0' '\n' <"/proc/$1/environ"; } 2>/dev/null | grep -qx "HERDR_APP_HOME=$HERDR_APP_HOME"; }
+ours() { { tr '\0' '\n' <"/proc/$1/environ"; } 2>/dev/null | grep -qx "SUNNA_HOME=$SUNNA_HOME"; }
 
 start_display() {
   mkdir -p "$root"
   if [[ -f $root/xpid ]] && kill -0 "$(cat "$root/xpid")" 2>/dev/null; then return 0; fi
   rm -f "$root/weston.log" "$root/display"
-  weston --backend=headless --xwayland --socket="herdr-app-$name" --width=1400 --height=900 \
+  weston --backend=headless --xwayland --socket="sunna-$name" --width=1400 --height=900 \
     --log="$root/weston.log" >/dev/null 2>&1 &
   echo $! >"$root/xpid"
   for _ in $(seq 50); do
@@ -70,7 +70,7 @@ stop_window() {
 start_window() {
   (cd "$here/.." && cargo build)
   start_display
-  mkdir -p "$HERDR_APP_HOME" "$root/bin"
+  mkdir -p "$SUNNA_HOME" "$root/bin"
   # Opening a link would reach the real browser: log it instead (`scripts/sandbox opened`).
   for opener in xdg-open open; do
     printf '#!/bin/sh\nprintf "%%s\\n" "$*" >>%q\n' "$root/opened" >"$root/bin/$opener"

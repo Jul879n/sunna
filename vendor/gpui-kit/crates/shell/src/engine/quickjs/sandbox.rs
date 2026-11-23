@@ -434,11 +434,18 @@ struct Budgets {
 }
 
 impl Default for Budgets {
+    /// `SUNNA_JS_BUDGET_SCALE` (1..=100, default 1) multiplies every budget. Test runs set it
+    /// (`.cargo/config.toml`): hundreds of renders in parallel can starve one of the CPU for
+    /// longer than the 50 ms render budget, and the render would be cut off as `interrupted`.
     fn default() -> Self {
+        let scale = std::env::var("SUNNA_JS_BUDGET_SCALE")
+            .ok()
+            .and_then(|v| v.parse::<u32>().ok())
+            .map_or(1, |n| n.clamp(1, 100));
         Self {
-            render: Duration::from_millis(50),
-            event: Duration::from_millis(500),
-            detached: Duration::from_secs(5),
+            render: Duration::from_millis(50) * scale,
+            event: Duration::from_millis(500) * scale,
+            detached: Duration::from_secs(5) * scale,
         }
     }
 }

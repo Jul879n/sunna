@@ -97,8 +97,23 @@ fn preset(name: &str) -> Option<&'static Palette> {
 const THEMES: &[(&str, &str)] = &[
     ("atom-one-dark", include_str!("../defaults/themes/atom-one-dark.json")),
     ("win98", include_str!("../defaults/themes/win98.json")),
+    ("catppuccin-mocha", include_str!("../defaults/themes/catppuccin-mocha.json")),
+    ("catppuccin-latte", include_str!("../defaults/themes/catppuccin-latte.json")),
+    ("dracula", include_str!("../defaults/themes/dracula.json")),
+    ("nord", include_str!("../defaults/themes/nord.json")),
+    ("tokyo-night", include_str!("../defaults/themes/tokyo-night.json")),
+    ("tokyo-night-day", include_str!("../defaults/themes/tokyo-night-day.json")),
+    ("gruvbox-dark", include_str!("../defaults/themes/gruvbox-dark.json")),
+    ("gruvbox-light", include_str!("../defaults/themes/gruvbox-light.json")),
+    ("rose-pine", include_str!("../defaults/themes/rose-pine.json")),
+    ("rose-pine-dawn", include_str!("../defaults/themes/rose-pine-dawn.json")),
+    ("github-dark", include_str!("../defaults/themes/github-dark.json")),
+    ("github-light", include_str!("../defaults/themes/github-light.json")),
 ];
-pub const SHIPPED_THEMES: &[&str] = &["atom-one-dark", "win98"];
+pub const SHIPPED_THEMES: &[&str] = &[
+    "atom-one-dark", "win98",
+    "catppuccin-mocha", "catppuccin-latte", "dracula", "nord", "tokyo-night", "tokyo-night-day", "gruvbox-dark", "gruvbox-light", "rose-pine", "rose-pine-dawn", "github-dark", "github-light",
+];
 
 /// `themes/<name>.json`: a palette, plus `colors` overrides like settings.json's.
 #[derive(Deserialize)]
@@ -111,7 +126,39 @@ struct ThemeFile {
     ansi: [String; 16],
     #[serde(default)]
     colors: BTreeMap<String, String>,
+    #[serde(default)]
+    style: UiStyle,
 }
+
+/// The `style` block of a theme file: how the interface is drawn, not its colors.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UiStyle {
+    /// 0..=24: base radius of the mods' controls (6 is the usual one).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub radius: Option<f32>,
+    /// 0..=24: radius of the pane frame.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane_radius: Option<f32>,
+    /// 0..=32: space between panes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane_gap: Option<f32>,
+    /// 0..=4: border of the pane frame; 0 removes the border and the focus ring.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub border_width: Option<f32>,
+    /// `none`, `sm`, `md` or `lg`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadow: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font: Option<String>,
+    /// 6..=72.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_size: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui_font: Option<String>,
+}
+
+type ThemeData = (Palette, BTreeMap<String, String>, UiStyle);
 
 fn theme_path(name: &str) -> std::path::PathBuf {
     crate::mods::app_dir().join("themes").join(format!("{name}.json"))
@@ -177,9 +224,9 @@ fn install_theme(path: &std::path::Path, name: &str, text: &str) {
 }
 
 /// A theme by name: a preset, or `themes/<name>.json`.
-fn palette(name: &str) -> Result<(Palette, BTreeMap<String, String>), String> {
+fn palette(name: &str) -> Result<ThemeData, String> {
     if let Some(p) = preset(name) {
-        return Ok((p.clone(), BTreeMap::new()));
+        return Ok((p.clone(), BTreeMap::new(), UiStyle::default()));
     }
     let path = theme_path(name);
     let text = std::fs::read_to_string(&path)
@@ -187,7 +234,7 @@ fn palette(name: &str) -> Result<(Palette, BTreeMap<String, String>), String> {
     parse_theme_file(name, &text)
 }
 
-fn parse_theme_file(name: &str, text: &str) -> Result<(Palette, BTreeMap<String, String>), String> {
+fn parse_theme_file(name: &str, text: &str) -> Result<ThemeData, String> {
     let f: ThemeFile = serde_json::from_str(text).map_err(|e| format!("themes/{name}.json: {e}"))?;
     let c = |k: &str, v: &str| {
         let h = v.trim().trim_start_matches('#');
@@ -202,6 +249,25 @@ fn parse_theme_file(name: &str, text: &str) -> Result<(Palette, BTreeMap<String,
             return Err(format!("themes/{name}.json: colors.{k}: {v:?} is not #rrggbb or #rrggbbaa"));
         }
     }
+    let st = &f.style;
+    for (k, v, min, max) in [
+        ("radius", st.radius, 0.0, 24.0),
+        ("pane_radius", st.pane_radius, 0.0, 24.0),
+        ("pane_gap", st.pane_gap, 0.0, 32.0),
+        ("border_width", st.border_width, 0.0, 4.0),
+        ("font_size", st.font_size, 6.0, 72.0),
+    ] {
+        if let Some(v) = v
+            && !(min..=max).contains(&v)
+        {
+            return Err(format!("themes/{name}.json: style.{k} {v} is outside {min}..{max}"));
+        }
+    }
+    if let Some(v) = &st.shadow
+        && !["none", "sm", "md", "lg"].contains(&v.as_str())
+    {
+        return Err(format!("themes/{name}.json: style.shadow {v:?} is not none, sm, md or lg"));
+    }
     let cursor = f.cursor.as_deref().map(|v| c("cursor", v)).transpose()?;
     let p = Palette {
         background: c("background", &f.background)?,
@@ -211,7 +277,7 @@ fn parse_theme_file(name: &str, text: &str) -> Result<(Palette, BTreeMap<String,
         ansi,
         status: None,
     };
-    Ok((p, f.colors))
+    Ok((p, f.colors, f.style))
 }
 
 #[test]
@@ -233,6 +299,15 @@ fn shipped_theme_upgrades_preserve_personal_edits() {
         std::fs::remove_file(&path).unwrap();
     }
     std::fs::remove_dir(root).unwrap();
+}
+
+#[test]
+fn theme_style_parses_and_validates() {
+    let base = |style: &str| format!(r##"{{"background":"#000000","foreground":"#ffffff","selection":"#111111","ansi":["#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000","#000000"],"style":{style}}}"##);
+    let ok = parse_theme_file("t", &base(r#"{"radius":10,"shadow":"md"}"#)).unwrap();
+    assert_eq!(ok.2.radius, Some(10.0));
+    assert!(parse_theme_file("t", &base(r#"{"radius":30}"#)).err().unwrap().contains("style.radius 30 is outside 0..24"));
+    assert!(parse_theme_file("t", &base(r#"{"shadow":"xl"}"#)).err().unwrap().contains("style.shadow"));
 }
 
 #[test]
@@ -259,7 +334,7 @@ pub fn theme_exists(name: &str) -> bool {
 
 /// Whether a theme is light (by its background), for picking its half of a pair.
 pub fn theme_is_light(name: &str) -> bool {
-    palette(name).map(|(p, _)| is_light(p.background)).unwrap_or(false)
+    palette(name).map(|(p, _, _)| is_light(p.background)).unwrap_or(false)
 }
 
 fn is_light(c: u32) -> bool {
@@ -269,7 +344,7 @@ fn is_light(c: u32) -> bool {
 
 /// Every theme that can be shown, presets first, each with its colors
 /// (the settings screen draws them as swatches).
-pub fn themes() -> Vec<(String, Theme)> {
+pub fn themes() -> Vec<(String, Theme, UiStyle, bool)> {
     let mut files: Vec<String> = std::fs::read_dir(crate::mods::app_dir().join("themes"))
         .into_iter()
         .flatten()
@@ -282,7 +357,10 @@ pub fn themes() -> Vec<(String, Theme)> {
         .iter()
         .map(|n| n.to_string())
         .chain(files)
-        .filter_map(|n| palette(&n).ok().map(|(p, o)| (n, resolve(&p, &o))))
+        .filter_map(|n| {
+            let shipped = PRESETS.contains(&n.as_str()) || SHIPPED_THEMES.contains(&n.as_str());
+            palette(&n).ok().map(|(p, o, st)| (n, resolve(&p, &o), st, shipped))
+        })
         .collect()
 }
 
@@ -572,7 +650,7 @@ impl Yolo {
 
 /// Attention sounds: when an agent needs you, and when one finished while you
 /// weren't looking. `done` / `blocked`: an MP3 file instead of the bundled one
-/// (absolute, or relative to ~/.config/herdr-app).
+/// (absolute, or relative to ~/.config/sunna).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Sounds {
@@ -728,8 +806,8 @@ pub fn path() -> std::path::PathBuf {
 }
 
 thread_local! {
-    static CURRENT: RefCell<(Rc<Settings>, Rc<Theme>)> =
-        RefCell::new((Rc::new(Settings::default()), Rc::new(resolve(&GRAPHITE, &BTreeMap::new()))));
+    static CURRENT: RefCell<(Rc<Settings>, Rc<Theme>, Rc<UiStyle>)> =
+        RefCell::new((Rc::new(Settings::default()), Rc::new(resolve(&GRAPHITE, &BTreeMap::new())), Rc::new(UiStyle::default())));
 }
 
 const ZOOM_MIN: f32 = 0.5;
@@ -742,6 +820,11 @@ pub fn get() -> Rc<Settings> {
 /// The resolved theme: every color by name.
 pub fn theme() -> Rc<Theme> {
     CURRENT.with(|c| c.borrow().1.clone())
+}
+
+/// The active theme's interface style.
+pub fn style() -> Rc<UiStyle> {
+    CURRENT.with(|c| c.borrow().2.clone())
 }
 
 /// A theme color as GPUI paint (magenta if missing, so mistakes show).
@@ -805,8 +888,27 @@ fn person_text(person: &Person, previous: &str) -> std::io::Result<String> {
     Ok(serde_json::to_string_pretty(&raw)? + "\n")
 }
 
+fn apply_style_fonts(s: &mut Settings, style: &UiStyle) {
+    if let Some(f) = &style.font {
+        s.font_family = f.clone();
+    }
+    if let Some(v) = style.font_size {
+        s.font_size = v;
+    }
+    if let Some(f) = &style.ui_font {
+        s.ui_font_family = f.clone();
+    }
+}
+
+#[test]
+fn theme_style_fonts_override() {
+    let mut s = Settings::default();
+    apply_style_fonts(&mut s, &UiStyle { ui_font: Some("Inter".into()), ..Default::default() });
+    assert_eq!(s.ui_font_family, "Inter");
+}
+
 /// Installs new settings; returns whether anything changed.
-pub fn set(s: Settings) -> bool {
+pub fn set(mut s: Settings) -> bool {
     crate::i18n::set(&s.language);
     #[cfg(target_os = "macos")]
     gpui_macos::set_option_as_alt(match s.option_as_alt {
@@ -819,14 +921,16 @@ pub fn set(s: Settings) -> bool {
     CURRENT.with(|c| {
         // Read the theme even when the settings are the same: its file may
         // have new colors under the same name.
-        let (p, mut colors) = palette(&s.theme).unwrap_or_else(|_| (GRAPHITE.clone(), BTreeMap::new()));
+        let (p, mut colors, style) = palette(&s.theme).unwrap_or_else(|_| (GRAPHITE.clone(), BTreeMap::new(), UiStyle::default()));
         colors.extend(s.colors.clone());
         let theme = resolve(&p, &colors);
-        if *c.borrow().0 == s && *c.borrow().1 == theme {
+        // The chosen theme wins over the layout and settings.json, as its colors do.
+        apply_style_fonts(&mut s, &style);
+        if *c.borrow().0 == s && *c.borrow().1 == theme && *c.borrow().2 == style {
             return false;
         }
         gpui_shell::set_pixel_scale(s.zoom);
-        *c.borrow_mut() = (Rc::new(s), Rc::new(theme));
+        *c.borrow_mut() = (Rc::new(s), Rc::new(theme), Rc::new(style));
         true
     })
 }

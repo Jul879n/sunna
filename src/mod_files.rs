@@ -18,7 +18,7 @@ pub fn read(path: &Path) -> Result<Option<String>, String> {
         .read_to_string(&mut text)
         .map_err(|e| e.to_string())?;
     if text.len() as u64 > LIMIT {
-        return Err(crate::i18n::t("rs.mod_files.text_file_exceeds_1_mib").into());
+        return Err(crate::i18n::t("rs.mod_files.text_file_exceeds_1_mib"));
     }
     Ok(Some(text))
 }
@@ -26,12 +26,11 @@ pub fn read(path: &Path) -> Result<Option<String>, String> {
 fn write(path: &Path, text: &str, expected: Option<&str>) -> Result<(), String> {
     let _guard = WRITES.lock().map_err(|e| e.to_string())?;
     if text.len() as u64 > LIMIT {
-        return Err(crate::i18n::t("rs.mod_files.text_file_exceeds_1_mib").into());
+        return Err(crate::i18n::t("rs.mod_files.text_file_exceeds_1_mib"));
     }
     if read(path)?.as_deref() != expected {
         return Err(
-            crate::i18n::t("rs.mod_files.the_file_changed_outside_herdr")
-                .into(),
+            crate::i18n::t("rs.mod_files.the_file_changed_outside_herdr"),
         );
     }
     let parent = path.parent().ok_or_else(|| crate::i18n::t("rs.mod_files.file_needs_a_parent_directory"))?;
@@ -47,7 +46,7 @@ fn write(path: &Path, text: &str, expected: Option<&str>) -> Result<(), String> 
     // Resolve symlinks so replacing the file does not replace the link itself.
     let target = crate::persist::resolve_target(path).map_err(|e| e.to_string())?;
     let temp = target.with_file_name(format!(
-        ".herdr-app-write-{}",
+        ".sunna-write-{}",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -67,7 +66,7 @@ fn write(path: &Path, text: &str, expected: Option<&str>) -> Result<(), String> 
         .map_err(|e| e.to_string())?;
         f.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
         if read(&target)?.as_deref() != expected {
-            return Err(crate::i18n::t("rs.mod_files.the_file_changed_while_saving").into());
+            return Err(crate::i18n::t("rs.mod_files.the_file_changed_while_saving"));
         }
         std::fs::rename(&temp, &target).map_err(|e| e.to_string())
     })();
@@ -117,7 +116,7 @@ mod tests {
     #[test]
     fn creates_updates_and_rejects_stale_text() {
         let root = crate::test_tmp().join(format!(
-            "herdr-app-files-{}",
+            "sunna-files-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()

@@ -2,7 +2,10 @@
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, tr } from "herdr";
+import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, tr, style } from "herdr";
+
+// Radius scale: the theme's `style.radius` (6 = the original sizes).
+const R = (n) => Math.round(n * style().radius / 6);
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -165,7 +168,7 @@ export default class Agents extends View {
         .h(31)
         .px(8)
         .gap(9)
-        .rounded(7)
+        .rounded(R(7))
         .items_center()
         .text_color(t.foreground)
         .hover((el) => el.bg(t.hover))
@@ -203,7 +206,7 @@ export default class Agents extends View {
       .id(`sub-${k.address}`)
       .pl(39)
       .pr(8)
-      .rounded(8)
+      .rounded(R(8))
       .h(26)
       .flex_none()
       .gap(0)
@@ -224,11 +227,11 @@ export default class Agents extends View {
   status(t, a, compact = false) {
     const color = t[a.status] ?? t.dim;
     if (a.status === "working") return svg("mods/workspace-chrome/spinner.svg").size(12).mx(1).flex_none().text_color(t.working).spin(900);
-    if (a.status === "blocked" && compact) return div().size(14).flex_none().rounded(4).bg(t.blocked + "26").text_size(10.5).font_bold().text_color(t.blocked).flex().items_center().justify_center().child("!");
-    if (a.status === "blocked") return div().flex_none().px(6).h(18).rounded(5).bg(t.blocked + "26").text_size(10.5).font_semibold().text_color(t.blocked).flex().items_center().child(tr("agents.needs_you_2"));
+    if (a.status === "blocked" && compact) return div().size(14).flex_none().rounded(R(4)).bg(t.blocked + "26").text_size(10.5).font_bold().text_color(t.blocked).flex().items_center().justify_center().child("!");
+    if (a.status === "blocked") return div().flex_none().px(6).h(18).rounded(R(5)).bg(t.blocked + "26").text_size(10.5).font_semibold().text_color(t.blocked).flex().items_center().child(tr("agents.needs_you_2"));
     // Idle: a ring; done: a dot.
-    if (a.status === "idle") return div().size(7).mx(3).flex_none().rounded(4).border(1.5).border_color(t.idle ?? t.dim);
-    return div().size(7).mx(3).flex_none().rounded(4).bg(a.status === "done" ? color : t.dim + "00");
+    if (a.status === "idle") return div().size(7).mx(3).flex_none().rounded(R(4)).border(1.5).border_color(t.idle ?? t.dim);
+    return div().size(7).mx(3).flex_none().rounded(R(4)).bg(a.status === "done" ? color : t.dim + "00");
   }
 
   render(cx) {
@@ -281,7 +284,7 @@ export default class Agents extends View {
         .gap(3)
         .flex()
         .items_center()
-        .rounded(4)
+        .rounded(R(4))
         .text_size(11)
         .text_color(open ? t.dim : (t[top] ?? t.dim))
         .cursor_pointer()
@@ -339,7 +342,7 @@ export default class Agents extends View {
         .id(`pin-${a.address}`)
         .flex_none()
         .p(2)
-        .rounded(4)
+        .rounded(R(4))
         .text_color(t.dim)
         .cursor_pointer()
         .hover((s) => s.bg(t.hover).text_color(t.foreground))
@@ -361,7 +364,7 @@ export default class Agents extends View {
         .px(8)
         .h(30)
         .flex_none()
-        .rounded(8)
+        .rounded(R(8))
         .items_center()
         .gap(9)
         .when(a.focused, (el) => el.bg(t.selected))

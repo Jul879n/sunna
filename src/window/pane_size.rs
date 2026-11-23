@@ -159,9 +159,10 @@ impl AppWindow {
     fn displayed_size(&self, shown: &Node, panes: usize, pane: &str, focused: &HashSet<String>, window: &Window) -> Option<(u16, u16)> {
         let (context, area) = self.context_area()?;
         let frame = match context.content() {
-            Some(Content::Context { pane: Some(frame), .. }) if frame.lone || panes > 1 => Some(frame),
+            Some(Content::Context { pane: Some(frame), .. }) if frame.lone || panes > 1 => Some(frame.styled(&settings::style())),
             _ => None,
         };
+        let frame = frame.as_ref();
         let zoom = settings::zoom();
         // The absolute bounds canvas already excludes the context border (padding box).
         let (y, x) = padding(context);
@@ -174,9 +175,10 @@ impl AppWindow {
     pub(super) fn unzoomed_neighbor(&self, tab: &Tab, from: &str, dir: &str) -> Option<String> {
         let (context, area) = self.context_area()?;
         let frame = match context.content() {
-            Some(Content::Context { pane: Some(frame), .. }) if frame.lone || tab.root.panes().len() > 1 => Some(frame),
+            Some(Content::Context { pane: Some(frame), .. }) if frame.lone || tab.root.panes().len() > 1 => Some(frame.styled(&settings::style())),
             _ => None,
         };
+        let frame = frame.as_ref();
         let zoom = settings::zoom();
         let (y, x) = padding(context);
         let origin = self.bounds.borrow().get(&context.id)?.origin + point(px(x * zoom), px(y * zoom));

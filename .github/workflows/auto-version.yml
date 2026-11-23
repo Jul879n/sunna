@@ -1,0 +1,43 @@
+name: Auto version
+
+# Every push to master raises the patch version, writes its CHANGELOG section from the
+# conventional commits since the last tag, and tags it: the tag starts release.yml.
+# RELEASE_TOKEN (a personal access token with contents:write) is needed: a tag pushed with
+# the default token does not start other workflows.
+
+on:
+  push:
+    branches: [master]
+    paths-ignore:
+      - CHANGELOG.md
+      - README.md
+      - docs/**
+
+permissions:
+  contents: write
+
+concurrency:
+  group: auto-version
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    # The bump commit itself must not start another bump.
+    if: ${{ !startsWith(github.event.head_commit.message, 'chore: release v') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN }}
+      - name: Raise the version
+        id: bump
+        run: echo "version=$(scripts/bump-version)" >> "$GITHUB_OUTPUT"
+      - name: Commit and tag
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add Cargo.toml Cargo.lock THIRD-PARTY-NOTICES CHANGELOG.md
+          git commit -m "chore: release v${{ steps.bump.outputs.version }}"
+          git tag "v${{ steps.bump.outputs.version }}"
+          git push origin HEAD:master "v${{ steps.bump.outputs.version }}"

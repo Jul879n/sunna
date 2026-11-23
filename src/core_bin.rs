@@ -22,10 +22,10 @@ pub fn install_cli_link() {
     if let Err(e) = std::thread::Builder::new().name("cli-link".into()).spawn(|| {
         let result = std::env::current_exe().and_then(|exe| cli_link::ensure(&crate::mods::home(), &exe));
         if let Err(e) = result {
-            tracing::warn!("cannot install herdr-app CLI link: {e}");
+            tracing::warn!("cannot install sunna CLI link: {e}");
         }
     }) {
-        tracing::warn!("cannot start herdr-app CLI setup: {e}");
+        tracing::warn!("cannot start sunna CLI setup: {e}");
     }
 }
 

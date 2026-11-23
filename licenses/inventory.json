@@ -198,6 +198,13 @@
       "files": [
         "LICENSE"
       ]
+    },
+    {
+      "name": "iTerm2-Color-Schemes (the color values of the bundled themes, via Ghostty)",
+      "source": "https://github.com/mbadolato/iTerm2-Color-Schemes",
+      "files": [
+        "licenses/iTerm2-Color-Schemes.txt"
+      ]
     }
   ]
 }

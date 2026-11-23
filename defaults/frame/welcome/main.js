@@ -2,22 +2,29 @@
 
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar } from "gpui-base";
-import { spaces, run, theme, props, closeOverlay, setShared, shared, hc, appHome, readTextFile, writeTextFile, settings, layout, keys, tr } from "herdr";
+import { spaces, run, theme, themes, layouts, props, closeOverlay, setShared, shared, hc, appHome, readTextFile, writeTextFile, settings, layout, keys, tr } from "herdr";
+import { themeCard } from "./theme-card.js";
 
 const I = (name) => `frame/welcome/${name}.svg`;
 const W = (name) => `mods/workspace-chrome/${name}.svg`;
 const PAGES = 4;
-const ASK = "Read ~/.config/herdr-app/AGENTS.md, then tell me what you can change in Herdr.";
-const MIGRATE = "Read `herdr-app --skill`, then migrate my keybinds and settings from ~/.config/herdr/config.toml";
+const ASK = "Read ~/.config/sunna/AGENTS.md, then tell me what you can change in Sunna.";
+const MIGRATE = "Read `sunna --skill`, then migrate my keybinds and settings from ~/.config/herdr/config.toml";
 const APPEARANCES = [
   [null, "welcome.system"],
   ["light", "welcome.light"],
   ["dark", "welcome.dark"],
 ];
 // The panels the layout offers (its "panel-body" stack), as the tab bar's buttons.
+const LANGUAGES = [
+  [null, "settings.language_system"],
+  ["es", "settings.language_es"],
+  ["en", "settings.language_en"],
+];
 const PANELS = [
   { id: "files", icon: "files", title: "welcome.files", about: "welcome.the_folder_you_re_in_as" },
   { id: "changes", icon: "git-compare", title: "welcome.changes", about: "welcome.what_your_agents_changed_every" },
+  { id: "search", icon: "search", title: "welcome.search", about: "welcome.find_text_across_the_files_of" },
 ];
 
 // The key bound to a command, as people press it: "Ctrl+Shift+P".
@@ -42,6 +49,7 @@ export default class Welcome extends View {
     this.machines = [];
     this.copied = null;
     this.appearance = null;
+    this.language = null;
     this.handle = cx.focus_handle();
     this.handle.focus();
     // It opens while the window is still starting, which takes the keyboard
@@ -49,7 +57,9 @@ export default class Welcome extends View {
     cx.timer.after(600, () => this.handle.focus());
     cx.spawn(async (cx) => {
       try {
-        this.appearance = JSON.parse((await readTextFile(`${appHome()}/settings.json`)) ?? "{}").appearance ?? null;
+        const saved = JSON.parse((await readTextFile(`${appHome()}/settings.json`)) ?? "{}");
+        this.appearance = saved.appearance ?? null;
+        this.language = saved.language ?? null;
       } catch {}
       await this.loadMachines();
       cx.notify();
@@ -85,6 +95,15 @@ export default class Welcome extends View {
 
   setAppearance(value, cx) {
     this.appearance = value;
+    this.save("appearance", value, cx);
+  }
+
+  setLanguage(value, cx) {
+    this.language = value;
+    this.save("language", value, cx);
+  }
+
+  save(key, value, cx) {
     cx.spawn(async (cx) => {
       const file = `${appHome()}/settings.json`;
       for (let i = 0; i < 3; i++) {
@@ -95,8 +114,8 @@ export default class Welcome extends View {
         } catch {
           return;
         }
-        if (value === null) delete p.appearance;
-        else p.appearance = value;
+        if (value === null) delete p[key];
+        else p[key] = value;
         try {
           await writeTextFile(file, JSON.stringify(p, null, 2) + "\n", raw);
           break;
@@ -182,6 +201,26 @@ export default class Welcome extends View {
             .child(tr(label)),
         ),
       );
+  }
+
+  // Every theme as a card: picking one applies it, and its light or dark mode with it.
+  themeGrid(t) {
+    const st = settings();
+    return h_flex().w_full().flex_wrap().gap(8).children(
+      themes()
+        .filter((x) => x.name === shared("layout") || !layouts().includes(x.name))
+        .map((entry) =>
+          themeCard(t, entry, {
+            id: `welcome-theme-${entry.name}`,
+            size: { w: 96, h: 60 },
+            selected: entry.name === (entry.light ? st.theme_light : st.theme_dark) && Boolean(entry.light) === (this.appearance === "light"),
+            onClick: (_e, cx) => {
+              this.setAppearance(entry.light ? "light" : "dark", cx);
+              run("app.theme", { name: entry.name });
+            },
+          }),
+        ),
+    );
   }
 
   sizeControl(t) {
@@ -289,7 +328,10 @@ export default class Welcome extends View {
       .child(this.feature(t, "messages", tr("welcome.agents_can_start_helpers"), tr("welcome.they_show_up_under_the")))
       .child(this.feature(t, "layers", tr("welcome.your_other_machines_in_the"), tr("welcome.a_server_or_a_mac")))
       .child(div().h(1).bg(t.border))
-      .child(h_flex().gap(10).items_center().child(div().w(84).text_size(13).text_color(t.muted).child(tr("welcome.appearance"))).child(this.segment(t, APPEARANCES, this.appearance, (v, cx) => this.setAppearance(v, cx))))
+      .child(h_flex().gap(10).items_center().child(div().w(84).text_size(13).text_color(t.muted).child(tr("settings.language"))).child(this.segment(t, LANGUAGES, this.language, (v, cx) => this.setLanguage(v, cx))))
+      .child(v_flex().gap(8)
+        .child(div().text_size(13).text_color(t.muted).child(tr("welcome.appearance")))
+        .child(this.themeGrid(t)))
       .child(h_flex().gap(10).items_center().child(div().w(84).text_size(13).text_color(t.muted).child(tr("welcome.size"))).child(this.sizeControl(t)))
       .child(this.comingFromHerdr(t));
   }
@@ -499,7 +541,7 @@ export default class Welcome extends View {
           .items_center()
           .border_b(1)
           .border_color(t.border)
-          .child(image("frame/welcome/herdr.png").w(24).h(24).rounded(6).flex_none())
+          .child(image("frame/welcome/sunna.png").w(24).h(24).rounded(6).flex_none())
           .child(div().text_size(14).font_semibold().text_color(t.foreground).child(tr("welcome.welcome_to_herdr")))
           .child(div().px(6).py(0.5).rounded(5).border_1().border_color(t.input).text_color(t.muted).text_size(10.5).font_semibold().child("BETA"))
           .child(div().flex_1())

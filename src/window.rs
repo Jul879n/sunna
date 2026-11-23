@@ -1283,7 +1283,7 @@ impl AppWindow {
         if self.shows_tab()
             && let Some(c) = self.model.active_tab()
         {
-            let header = self.pane_frame().and_then(|f| f.header.as_ref()).and_then(|h| match &h.content {
+            let header = self.pane_frame().and_then(|f| f.header).and_then(|h| match &h.content {
                 HeaderContent::Mod { name, props } => Some((name.clone(), props.clone())),
                 HeaderContent::Builtin(_) => None,
             });
@@ -1775,7 +1775,7 @@ impl AppWindow {
     fn load(&self, inst: Instance, window: &mut Window, cx: &mut Context<Self>) -> Copy {
         let mut copy = Copy { inst, id: 0, root: None, _watch: None, error: None };
         let (Some(runtime), Some(folder)) = (&self.runtime, self.folders.get(&copy.inst.name)) else {
-            copy.error = Some(format!("no mod folder ~/.config/herdr-app/mods/{}", copy.inst.name));
+            copy.error = Some(format!("no mod folder ~/.config/sunna/mods/{}", copy.inst.name));
             return copy;
         };
         copy.id = mods::prepare_load(&copy.inst);
@@ -2337,7 +2337,7 @@ impl AppWindow {
         let name = rec
             .and_then(|r| r.get("name").and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_owned))
             .or_else(|| app.as_deref().map(crate::programs::name))
-            .unwrap_or_else(|| crate::i18n::t("rs.window.an_agent").into());
+            .unwrap_or_else(|| crate::i18n::t("rs.window.an_agent"));
         // A sub-agent lives where its top agent does.
         let home = self.root_agent(addr);
         let place = self.model.pane_of(&home).and_then(|pane| {
@@ -2485,7 +2485,7 @@ impl AppWindow {
                 let repo = last.as_ref().is_none_or(|l| l.cwd != cwd || l.repo); // until git says otherwise
                 self.folders_checked.insert(addr.clone(), FolderCheck { at: Instant::now(), cwd: cwd.clone(), busy, repo });
                 // Another machine's terminal (`vps/t7`): git runs there.
-                todo.entry((addr.split_once('/').map(|(m, _)| m.to_owned()), cwd)).or_insert_with(Vec::new).push(addr.clone());
+                todo.entry((addr.split_once('/').map(|(m, _)| m.to_owned()), cwd)).or_default().push(addr.clone());
             } else if let Some(last) = last {
                 last.busy = busy;
             }
@@ -2549,7 +2549,7 @@ impl AppWindow {
             }
             if closed && self.model.address_of(block).as_deref() == Some(t.address.as_str()) {
                 self.model.remove_pane(block);
-                return self.sync(window, cx);
+                self.sync(window, cx)
             }
         }
         // Otherwise the next listing checks closure; core owns lost terminals.
@@ -3047,7 +3047,7 @@ impl AppWindow {
                 return json!({ "ok": true });
             }
             tracing::warn!("unknown command {name:?}");
-            return json!({ "error": format!("unknown command {name:?}: see `herdr-app commands`; a mod's are <mod>.<command> and need the mod loaded") });
+            return json!({ "error": format!("unknown command {name:?}: see `sunna commands`; a mod's are <mod>.<command> and need the mod loaded") });
         };
         if let Err(error) = crate::commands::validate_args(command, &args) {
             return json!({ "error": error });
@@ -3599,11 +3599,10 @@ impl AppWindow {
                     return self.fail(format!("{name:?} isn't a layout Herdr ships"));
                 };
                 // Theirs is kept under a name nothing else has (never over an older one).
-                if layout_path(&name).exists() {
-                    if let Err(e) = std::fs::rename(layout_path(&name), aside(&layout_path(&name), "old")) {
+                if layout_path(&name).exists()
+                    && let Err(e) = std::fs::rename(layout_path(&name), aside(&layout_path(&name), "old")) {
                         return self.fail(format!("cannot set layouts/{name}.json aside: {e}"));
                     }
-                }
                 if !write_atomic(&layout_path(&name), text) {
                     return self.fail(format!("cannot write layouts/{name}.json"));
                 }
@@ -4074,7 +4073,7 @@ impl AppWindow {
             Request::Run { name, args } => self.run(&name, args, window, cx),
             Request::OpenOverlay { id, spec } => self.open_overlay(id, spec, window, cx),
             Request::CloseOverlay { id } => self.close_overlay(&id, window, cx),
-            Request::SetWindowTitle(title) => window.set_window_title(title.as_deref().unwrap_or("Herdr")),
+            Request::SetWindowTitle(title) => window.set_window_title(title.as_deref().unwrap_or("Sunna")),
             Request::SetBadge(text) => crate::badge::set(text.as_deref()),
             Request::Refresh => self.refresh_mods(cx),
             Request::Control { cmd, reply } => {
@@ -4128,7 +4127,7 @@ impl AppWindow {
         json!({ "error": "expected { do }, { ls }, { commands } or { status }" })
     }
 
-    /// Spaces, their tabs and terminals, for `herdr-app ls`. Sub-agents are listed
+    /// Spaces, their tabs and terminals, for `sunna ls`. Sub-agents are listed
     /// under the terminal that started them.
     fn world(&self) -> Value {
         let m = &self.model;
@@ -4438,13 +4437,13 @@ impl AppWindow {
 
     /// The shown tab block's pane frame, if its panes are framed now: when
     /// the tab is split, or always with `lone`.
-    fn pane_frame(&self) -> Option<&PaneFrame> {
+    fn pane_frame(&self) -> Option<PaneFrame> {
         let frame = self.chrome.visible_blocks().into_iter().find_map(|n| match n.content() {
             Some(Content::Context { pane, .. }) => pane.as_ref(),
             _ => None,
         })?;
         let ctx = self.model.active_tab()?;
-        (frame.lone || ctx.root.panes().len() > 1).then_some(frame)
+        (frame.lone || ctx.root.panes().len() > 1).then(|| frame.styled(&settings::style()))
     }
 
     /// A pane in its frame: the look, and the header mod above or below it
@@ -4582,7 +4581,10 @@ impl AppWindow {
                     .into_any_element(),
             },
             Content::Context { .. } => match self.model.active_tab() {
-                Some(c) => self.render_node(c.shown(), focused, self.pane_frame(), cx),
+                Some(c) => {
+                    let frame = self.pane_frame();
+                    self.render_node(c.shown(), focused, frame.as_ref(), cx)
+                }
                 None if self.documents.get("").is_some_and(|s| s.layout() == "loading") => div().size_full().into_any_element(),
                 None => {
                     let key = crate::keys::listing().into_iter().find(|(_, _, a)| a == "space.new").map(|(_, k, _)| format!(" ({k})"));
@@ -7046,7 +7048,7 @@ export default class Probe extends View {
             cx.window_title()
         };
         assert_eq!(title(json!("acorn"), cx).as_deref(), Some("acorn"));
-        assert_eq!(title(json!(null), cx).as_deref(), Some("Herdr"));
+        assert_eq!(title(json!(null), cx).as_deref(), Some("Sunna"));
     }
 
     include!("window/pane_size_tests.rs");

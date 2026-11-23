@@ -14,13 +14,13 @@ Linux needs a desktop session and a working Vulkan driver. macOS builds are avai
 
 The installer adds Herdr to your apps and puts the command in `~/.local/bin`.
 Add that folder to your PATH if the installer asks.
-On macOS the app lives in `/Applications/Herdr.app`.
+On macOS the app lives in `/Applications/Sunna.app`.
 For drag-and-drop installation on Apple Silicon, download [Herdr.dmg](https://releases.herdr.dev/app/Herdr.dmg) and drag Herdr to Applications.
 
 On macOS (Apple Silicon), you can also install with [Homebrew](https://brew.sh/):
 
 ```sh
-brew install --cask herdr-app
+brew install --cask sunna
 ```
 
 ### Windows
@@ -31,7 +31,7 @@ Run in PowerShell on x64 Windows with curl and tar installed (Windows 10 1803 or
 irm https://releases.herdr.dev/app/install.ps1 | iex
 ```
 
-Herdr appears in the Start menu. The installer adds `%LOCALAPPDATA%\Programs\herdr-app` to your user PATH. Open a new terminal to pick it up.
+Herdr appears in the Start menu. The installer adds `%LOCALAPPDATA%\Programs\sunna` to your user PATH. Open a new terminal to pick it up.
 
 The shell and PowerShell installers download and run code. Read the [shell installer](distribution/install.sh) or [PowerShell installer](distribution/install.ps1) first if you prefer.
 They also install [herdr-core](https://github.com/herdrdev/herdr-core) if it is missing.
@@ -100,16 +100,16 @@ Mods are trusted code, not sandboxed extensions. Read [security and privacy](doc
 ## For agents
 
 ```sh
-herdr-app --skill
+sunna --skill
 ```
 
 This prints the agent guide for driving the window. The herdr-core skill points agents here.
 Use herdr-core for running and coordinating programs; use the app to change what you see.
 
 ```sh
-herdr-app ls
-herdr-app status
-herdr-app commands
+sunna ls
+sunna status
+sunna commands
 ```
 
 The first two inspect the open window. The command list also works without one.
@@ -123,8 +123,8 @@ Clone this repo with its submodules. Use Rust 1.95.0 and Zig 0.16.0, the version
 Linux needs the development packages listed in that workflow.
 
 ```sh
-git clone --recurse-submodules https://github.com/herdrdev/herdr-app.git
-cd herdr-app
+git clone --recurse-submodules https://github.com/herdrdev/sunna.git
+cd sunna
 just build
 just test
 just install

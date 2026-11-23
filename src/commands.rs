@@ -1,5 +1,5 @@
 //! Every command the app runs, defined once. Keys, menus, mods and
-//! `herdr-app do` all run these; key checks, `herdr-app commands` and the docs come
+//! `sunna do` all run these; key checks, `sunna commands` and the docs come
 //! from this list. Mods' own commands are `<mod>.<command>`.
 
 use serde_json::{Value, json};
@@ -94,7 +94,7 @@ pub const COMMANDS: &[Command] = &[
     cmd("app.whats_new", &[], "Show what this release brought (it opens once by itself after an update)."),
     cmd("app.feedback", &[opt("message"), opt("from")], "Draft feedback for the person to review and send (from: person or agent)."),
     cmd("app.palette", &[], "Toggle the command palette: every command by name, with its key; calling again closes it."),
-    cmd("app.settings", &[opt("section")], "Open the settings (section: look, layout, general, agents, keyboard, machines, alerts, updates, privacy)."),
+    cmd("app.settings", &[opt("section")], "Open the settings (section: look, layout, mods, general, agents, keyboard, machines, alerts, updates, privacy)."),
     cmd("app.check_updates", &[], "Look for a newer Herdr and herdr-core now."),
     cmd("app.update_core", &[], "Update herdr-core to its latest release of this generation; terminals keep running."),
     cmd("app.reset", &[], "The escape hatch: set the shown layout and keys aside, back to the default screen."),
@@ -159,7 +159,7 @@ pub fn missing(c: &Command, args: &Value) -> Option<&'static str> {
     })
 }
 
-/// The list as data, for `herdr-app commands` and mods.
+/// The list as data, for `sunna commands` and mods.
 pub fn listing() -> Value {
     Value::Array(
         COMMANDS

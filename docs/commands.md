@@ -2,14 +2,14 @@
 
 # Commands
 
-Inspect the window with `herdr-app ls` and `herdr-app status`.
-`herdr-app commands` lists the app actions below, even without an open window.
+Inspect the window with `sunna ls` and `sunna status`.
+`sunna commands` lists the app actions below, even without an open window.
 
-Run an action in the open window with `herdr-app do`:
+Run an action in the open window with `sunna do`:
 
 ```sh
-herdr-app do pane.split --direction right
-herdr-app do pane.split '{"direction":"right"}'
+sunna do pane.split --direction right
+sunna do pane.split '{"direction":"right"}'
 ```
 
 Arguments can be named flags or one JSON object. Required arguments are marked below.

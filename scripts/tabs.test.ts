@@ -24,12 +24,15 @@ const source = await readFile(new URL("../defaults/mods/tabs/main.js", import.me
 const element = () => new Element();
 const commands: string[] = [];
 const store: Record<string, string> = {};
+let testLayout: unknown = null;
+const testShared: Record<string, unknown> = {};
 const values: Record<string, unknown> = {
   tr, View: class {}, div: element, svg: element, image: element, h_flex: element,
   ScrollHandle: { new: () => ({ scroll_to_item() {} }) },
   spaces: () => [{ id: "s1", active: true, tabs: [{ id: "t1", name: "a" }, { id: "t2", name: "b", active: true }, { id: "t3", name: "c" }] }],
-  panes: () => [], run(command: string) { commands.push(command); }, openOverlay() {}, theme: () => ({}),
-  window: () => null, shared: () => null, layout: () => null, settings: () => ({ zoom: 1 }),
+  panes: () => [], run(command: string) { commands.push(command); }, openOverlay() {}, theme: () => ({}), style: () => ({ radius: 6 }),
+  window: () => null, shared: (key: string) => testShared[key] ?? null, layout: () => testLayout, settings: () => ({ zoom: 1 }),
+  readTextFile: async () => null, appHome: () => "/h",
   localStorage: { getItem: (key: string) => store[key] ?? null, setItem(key: string, value: string) { store[key] = value; } },
 };
 const Tabs = new Function(...Object.keys(values), source.replace(/^import .*;\n/gm, "").replace("export default class Tabs", "return class Tabs"))(...Object.values(values));
@@ -140,4 +143,24 @@ test("a shell's title never replaces its tab's name", () => {
   expect(label({ name: "", named: false }, shell)).toBe("zsh");
   expect(label({ name: "notes", named: true }, shell)).toBe("notes");
   expect(label({ name: "", named: false }, undefined)).toBe("Terminal");
+});
+
+const block = (id: string) => ({ id, type: "block", content: { mod: id } });
+const buttonIds = (el: Element, out: string[] = []): string[] => {
+  if (!el || typeof el !== "object") return out;
+  const id = el.calls.id?.[0];
+  if (typeof id === "string" && id.startsWith("panel-")) out.push(id);
+  el.nodes.forEach((n) => buttonIds(n, out));
+  return out;
+};
+
+test("the tab bar has a button for each panel the layout holds that is turned on", () => {
+  testLayout = { id: "root", type: "row", children: [{ id: "panel", type: "column", hidden: true, children: [{ id: "panel-body", type: "stack", active: "files", children: [block("files"), block("changes"), block("search")] }] }] };
+  testShared["workspace.panels"] = ["files", "search"];
+  const view = new Tabs();
+  view.init();
+  expect(buttonIds(view.render() as Element)).toEqual(["panel-files", "panel-search"]);
+  delete testShared["workspace.panels"];
+  expect(buttonIds(view.render() as Element)).toEqual(["panel-files", "panel-changes", "panel-search"]);
+  testLayout = null;
 });

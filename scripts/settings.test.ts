@@ -1,12 +1,15 @@
 import { expect, test } from "bun:test";
 import { tr } from "./tr-stub";
 import { readFile } from "node:fs/promises";
+import { loadModule } from "./mod-module";
+import * as themeImport from "../defaults/frame/settings/theme-import.js";
 
 // What a click in the Settings window writes to settings.json, without a window or a core.
 const source = await readFile(new URL("../defaults/frame/settings/main.js", import.meta.url), "utf8");
 // settings.json as the mod sees it through readTextFile / writeTextFile.
 const disk: { raw: string | null; writes: number; fail?: string; readFail?: string; toasts: any[]; keys?: any[] } = { raw: null, writes: 0, toasts: [] };
 // Chainable element stub: records ids, click handlers and children so a test can find a button by id.
+const sharedValues: Record<string, unknown> = {};
 const ui = { calls: [] as any[], tree: null as any, shared: "main" as string };
 function el(): any {
   const node: any = { id: null, click: null, kids: [] };
@@ -36,11 +39,12 @@ const values: Record<string, any> = {
   tr, View: class {},
   div: el, h_flex: el, v_flex: el, svg: el,
   layout: () => ui.tree,
-  shared: () => ui.shared,
+  shared: (key: string) => (key === "layout" ? ui.shared : sharedValues[key] ?? null),
+  setShared: (key: string, v: unknown) => { sharedValues[key] = v; },
   run: (...a: any[]) => { ui.calls.push(a); },
   exec: (...a: any[]) => { ui.calls.push(["exec", ...a]); return Promise.resolve(null); },
   window: () => ({ platform: "linux" }),
-  updates: () => ({ app: { version: "1.0.0", ready: null, updates: true }, core: { version: "1", managed: null, ready: null, updating: false, error: null }, checked: null, checks: true, checking: false, fork: { repo: "Jul879n/herdr-app", latest: "1.1.0", url: "https://example.test/r", newer: true, notes: null, error: null } }),
+  updates: () => ({ app: { version: "1.0.0", ready: null, updates: true }, core: { version: "1", managed: null, ready: null, updating: false, error: null }, checked: null, checks: true, checking: false, fork: { repo: "Jul879n/sunna", latest: "1.1.0", url: "https://example.test/r", newer: true, notes: null, error: null } }),
   keys: () => disk.keys,
   appHome: () => "/home",
   notify: (n: any) => { disk.toasts.push(n); },
@@ -55,6 +59,21 @@ const values: Record<string, any> = {
     disk.raw = text;
   },
 };
+// themes.js, as main.js imports it: the same stubs, an in-memory fs.
+const files = new Map<string, string>();
+const fsStub = { exists: async (p: string) => files.has(p), unlink: async (p: string) => { files.delete(p); }, readdir: async () => [] };
+const themeList: any[] = [];
+const colors = () => new Proxy({}, { get: () => "#112233" });
+values.themes = () => themeList;
+values.settings = () => ({ theme: "dark-a", theme_light: "light-a", theme_dark: "dark-a" });
+values.layouts = () => [];
+values.InputState = { new: (o: any = {}) => ({ on() {}, value: () => o.value ?? "", set_value() {} }) };
+values.Input = { new: el };
+values.home = () => "/home";
+Object.assign(values, themeImport, { fs: fsStub });
+Object.assign(values, await loadModule(new URL("../defaults/frame/settings/fsx.js", import.meta.url), values));
+Object.assign(values, await loadModule(new URL("../defaults/frame/settings/sidebar.js", import.meta.url), values));
+Object.assign(values, await loadModule(new URL("../defaults/frame/settings/themes.js", import.meta.url), values));
 const names = [...source.matchAll(/^import \{([^}]*)\}/gm)].flatMap(m => m[1].split(",").map(n => n.trim()));
 const args = names.map(name => values[name] ?? (() => undefined));
 const Settings = new Function(...names, source.replace(/^import .*;\n/gm, "").replace("export default class Settings", "return class Settings"))(...args);
@@ -181,4 +200,68 @@ test("a newer fork release shows a button that opens it", () => {
   expect(btn).not.toBeNull();
   btn.click({}, { notify() {} });
   expect(ui.calls.at(-1)).toEqual(["exec", "xdg-open", ["https://example.test/r"]]);
+});
+
+
+const cx = () => ({ notify() {}, spawn: (f: (cx: any) => any) => f({ notify() {} }), stop_propagation() {} });
+const palette = new Proxy({}, { get: () => "#000000" });
+
+test("the theme section draws a card per theme and a click applies it", () => {
+  themeList.splice(0, themeList.length,
+    { name: "dark-a", light: false, colors: colors(), style: {}, shipped: true },
+    { name: "dark-b", light: false, colors: colors(), style: { radius: 0 }, shipped: false });
+  ui.calls = [];
+  const out = new Settings().themePicker(palette, false);
+  expect(found(out, "st-t-dark-a")).not.toBeNull();
+  expect(found(out, "st-t-dark-b")).not.toBeNull();
+  found(out, "st-t-dark-b").click({}, cx());
+  expect(ui.calls).toContainEqual(["app.theme", { name: "dark-b" }]);
+});
+
+test("a new theme from the current one saves 16 ansi colors and its style; an invalid hex saves nothing", async () => {
+  themeList.splice(0, themeList.length, { name: "dark-a", light: false, colors: colors(), style: { radius: 4 }, shipped: true });
+  Object.assign(disk, { raw: null, writes: 0, fail: undefined, toasts: [] });
+  const view = new Settings();
+  view.importing = false;
+  view.editing = null;
+  view.importPanel = null;
+  const tools = () => view.themeTools(palette, cx());
+  found(tools(), "st-theme-new").click({}, cx());
+  expect(view.editing).not.toBeNull();
+  expect(view.editing.name).toBe("dark-a-mio");
+  view.editing.draft.background = "nope";
+  found(tools(), "st-te-save").click({}, cx());
+  await new Promise((r) => setTimeout(r, 10));
+  expect(disk.writes).toBe(0);
+  view.editing.draft.background = "#102030";
+  ui.calls = [];
+  found(tools(), "st-te-save").click({}, cx());
+  await new Promise((r) => setTimeout(r, 10));
+  const saved = JSON.parse(disk.raw!);
+  expect(saved.ansi).toHaveLength(16);
+  expect(saved.style).toEqual({ radius: 4 });
+  expect(saved.background).toBe("#102030");
+  expect(ui.calls).toContainEqual(["app.theme", { name: "dark-a-mio" }]);
+});
+
+test("adding a mod's panel on a Herdr layout copies it first, then adds the child once the copy is shown", () => {
+  const withBody = () => ({ id: "root", type: "row", children: [{ id: "panel-body", type: "stack", active: "files", children: [block("files"), block("changes")] }] });
+  ui.tree = withBody();
+  ui.shared = "main";
+  ui.calls = [];
+  const view = new Settings();
+  view.sidebar = new (values.SidebarEditor)(view, ["main", "terminals", "win98"]);
+  view.sidebar.info = { demo: { title: "Demo" } };
+  const out = view.design(palette, cx());
+  found(out, "st-sb-add-demo").click({}, cx());
+  expect(ui.calls).toEqual([["layout.clone", { name: "main", as: "my-main" }]]);
+  ui.shared = "my-main";
+  ui.calls = [];
+  view.design(palette, cx());
+  const set = ui.calls.find((c) => c[0] === "layout.set")!;
+  const body = (function find(n: any): any { return n.id === "panel-body" ? n : n.children?.map(find).find(Boolean); })(set[1].layout);
+  expect(body.children.map((c: any) => c.id)).toEqual(["files", "changes", "panel-demo"]);
+  expect(body.children[2].content).toEqual({ mod: "demo" });
+  expect(sharedValues["workspace.panels"]).toContain("panel-demo");
+  ui.shared = "main";
 });

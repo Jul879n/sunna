@@ -82,8 +82,8 @@ exit 97''')
         """The URL install.sh downloads the app from, for a manifest giving `url`."""
         home = Path(self.work.name) / "home"
         data = home / ".local/share"
-        shutil.rmtree(data / "herdr-app", ignore_errors=True)
-        (data / "herdr-app" if installed else data).mkdir(parents=True, exist_ok=True)
+        shutil.rmtree(data / "sunna", ignore_errors=True)
+        (data / "sunna" if installed else data).mkdir(parents=True, exist_ok=True)
         log = Path(self.work.name) / "urls"
         log.unlink(missing_ok=True)
         manifest = Path(self.work.name) / "latest.json"
@@ -105,30 +105,33 @@ exit 22''')
 
     def test_installer_marks_plain_release_downloads_for_the_counter(self):
         r = "https://releases.example"
-        tarball = f"{r}/app/1.0.0/herdr-app-linux-x86_64.tar.gz"
-        self.assertEqual(self.download_url(tarball), f"{tarball}?src=install")
+        tarball = f"{r}/app/1.0.0/sunna-linux-x86_64.tar.gz"
+        # The installer also looks at the real /Applications: a machine that has Sunna there says reinstall.
+        if not os.path.exists("/Applications/Sunna.app"):
+            self.assertEqual(self.download_url(tarball), f"{tarball}?src=install")
         self.assertEqual(self.download_url(tarball, installed=True), f"{tarball}?src=reinstall")
         # A mirror's query (a signed URL) or fragment, or another host: exactly as given.
         for url in (f"{tarball}?sig=a%2Fb&exp=1", f"{tarball}?src=update", f"{tarball}#x",
-                    "https://mirror.example/app/1.0.0/herdr-app-linux-x86_64.tar.gz",
-                    "https://releases.example.evil/app/1.0.0/herdr-app-linux-x86_64.tar.gz"):
+                    "https://mirror.example/app/1.0.0/sunna-linux-x86_64.tar.gz",
+                    "https://releases.example.evil/app/1.0.0/sunna-linux-x86_64.tar.gz"):
             with self.subTest(url=url):
                 self.assertEqual(self.download_url(url), url)
         # A test server elsewhere marks its own URLs.
         local = "http://127.0.0.1:8000/e2e"
-        self.assertEqual(self.download_url(f"{local}/app/1.0.0/a.tar.gz", releases=local), f"{local}/app/1.0.0/a.tar.gz?src=install")
+        if not os.path.exists("/Applications/Sunna.app"):
+            self.assertEqual(self.download_url(f"{local}/app/1.0.0/a.tar.gz", releases=local), f"{local}/app/1.0.0/a.tar.gz?src=install")
 
     def mac_installer(self, signature, status, verify_status=0):
         home = self.bin / "home"
         (home / ".local/bin").mkdir(parents=True)
         (home / ".local/bin/herdr-core").touch()
-        source = self.bin / "source/Herdr.app/Contents"
+        source = self.bin / "source/Sunna.app/Contents"
         source.mkdir(parents=True)
         plist = b"signed release plist must stay unchanged"
         (source / "Info.plist").write_bytes(plist)
         archive = self.bin / "release.tar.gz"
         with tarfile.open(archive, "w:gz") as tar:
-            tar.add(source.parent, arcname="Herdr.app")
+            tar.add(source.parent, arcname="Sunna.app")
         sha = hashlib.sha256(archive.read_bytes()).hexdigest()
         manifest = self.bin / "manifest.json"
         manifest.write_text('{"version":"1.0.0","targets":{"macos-aarch64":{"url":"release","sha256":"%s"}}}' % sha)
@@ -138,7 +141,7 @@ for a; do
   prev=$a
 done
 case $url in */latest.json) cp "{manifest}" "$out" ;; release) cp "{archive}" "$out" ;; *) exit 97 ;; esac''')
-        installed = home / "Applications/Herdr.app/Contents/Info.plist"
+        installed = home / "Applications/Sunna.app/Contents/Info.plist"
         installed.parent.mkdir(parents=True)
         installed.write_bytes(b"previous installed app")
         fixture = self.bin / "signature.txt"
@@ -211,13 +214,13 @@ printf 'dev PATH added' >> "$3"''')
         self.assertEqual(len(calls), 2)
         self.assertTrue(calls[1].startswith("--verify --deep --strict "))
 
-    def test_intel_mac_package_stops_before_build(self):
+    def test_intel_mac_package_reaches_the_build(self):
+        # The fork packs Intel Macs too: the script goes on to the (stubbed) build.
         for args in ((), ("x86_64-apple-darwin",)):
             with self.subTest(args=args):
                 result = self.run_script("scripts/package", "Darwin", "x86_64", *args)
-                self.assertEqual(result.returncode, 1)
-                self.assertIn("Intel Macs aren't supported; build from source", result.stderr)
-                self.assertNotIn("unexpected build", result.stderr)
+                self.assertNotIn("Intel Macs", result.stderr)
+                self.assertIn("unexpected build", result.stderr)
 
     def test_supported_installers_still_try_download(self):
         for os_name, arch in (("Darwin", "arm64"), ("Linux", "x86_64"), ("Linux", "aarch64")):
@@ -241,18 +244,18 @@ printf 'dev PATH added' >> "$3"''')
         sign.chmod(0o755)
         release = checkout / "target/release"
         release.mkdir(parents=True)
-        for name in ("herdr-app", "herdr-app.exe"):
+        for name in ("sunna", "sunna.exe"):
             (release / name).write_bytes(b"test binary")
         self.stub("cargo", "exit 0")
         for os_name, arch, target, prefix in (
-            ("Linux", "x86_64", "linux-x86_64", "herdr-app"),
-            ("Darwin", "arm64", "macos-aarch64", "Herdr.app/Contents/Resources"),
-            ("MINGW64_NT", "x86_64", "windows-x86_64", "herdr-app"),
+            ("Linux", "x86_64", "linux-x86_64", "sunna"),
+            ("Darwin", "arm64", "macos-aarch64", "Sunna.app/Contents/Resources"),
+            ("MINGW64_NT", "x86_64", "windows-x86_64", "sunna"),
         ):
             with self.subTest(target=target):
                 result = self.run_script(checkout / "scripts/package", os_name, arch)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                with tarfile.open(checkout / f"dist/herdr-app-{target}.tar.gz") as archive:
+                with tarfile.open(checkout / f"dist/sunna-{target}.tar.gz") as archive:
                     for name in ("LICENSE", "THIRD-PARTY-NOTICES"):
                         self.assertEqual(
                             archive.extractfile(f"{prefix}/{name}").read(),

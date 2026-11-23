@@ -1,5 +1,5 @@
-//! The app's own updates. An installed app (Linux: `~/.local/share/herdr-app`,
-//! macOS: `Herdr.app`) checks `releases.herdr.dev/app/latest.json` a little
+//! The app's own updates. An installed app (Linux: `~/.local/share/sunna`,
+//! macOS: `Sunna.app`) checks `releases.herdr.dev/app/latest.json` a little
 //! after it opens and every hour, downloads a newer build for this
 //! machine, checks its sha256 and unpacks it next to itself (`<install>.new`).
 //! The frame then shows "Restart"; the swap happens on restart or the next
@@ -8,11 +8,11 @@
 //!
 //! A build from source never updates: only `scripts/package` (the release
 //! builds) sets `HERDR_APP_RELEASE`. `scripts/install-macos` makes a
-//! Herdr.app too, so the install's shape alone can't tell.
+//! Sunna.app too, so the install's shape alone can't tell.
 //!
 //! The fork's own builds (not official releases, not tests, unless
 //! `HERDR_NO_FORK_CHECK` is set) also look at the latest GitHub release of
-//! `Jul879n/herdr-app` on the same clock and expose it in `status()["fork"]`.
+//! `Jul879n/sunna` on the same clock and expose it in `status()["fork"]`.
 //! A packed install whose release has a `latest.json` asset downloads and
 //! stages that build through the same verified flow.
 //!
@@ -41,23 +41,23 @@ fn find_root() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
     let dir = exe.parent()?;
     if cfg!(target_os = "macos") {
-        // Herdr.app/Contents/MacOS/Herdr
+        // Sunna.app/Contents/MacOS/Sunna
         let bundle = dir.parent()?.parent()?;
         (bundle.extension()? == "app").then(|| bundle.to_path_buf())
     } else {
         // The release folder holds the binary and its icon; cargo's target/ doesn't.
-        dir.join("herdr-app.svg").is_file().then(|| dir.to_path_buf())
+        dir.join("sunna.svg").is_file().then(|| dir.to_path_buf())
     }
 }
 
 /// The folder or bundle name inside a release tarball.
-const PACKED: &str = if cfg!(target_os = "macos") { "Herdr.app" } else { "herdr-app" };
+const PACKED: &str = if cfg!(target_os = "macos") { "Sunna.app" } else { "sunna" };
 
 fn beside(root: &Path, suffix: &str) -> PathBuf {
     let mut name = root.file_name().unwrap_or_default().to_os_string();
     name.push(suffix);
     // macOS: Spotlight skips a folder ending in `.noindex`, so a staged
-    // `Herdr.app.new` never shows up in search under that name.
+    // `Sunna.app.new` never shows up in search under that name.
     if cfg!(target_os = "macos") {
         name.push(".noindex");
     }
@@ -76,11 +76,11 @@ fn target() -> String {
 }
 
 /// The fork's GitHub repository, whose releases the fork's own builds look for.
-const FORK_REPO: &str = "Jul879n/herdr-app";
+const FORK_REPO: &str = "Jul879n/sunna";
 
 /// The fork check runs in the fork's builds only: never in official releases or tests.
 fn fork_enabled() -> bool {
-    option_env!("HERDR_APP_RELEASE").is_none() && !cfg!(test) && std::env::var_os("HERDR_NO_FORK_CHECK").is_none()
+    !cfg!(test) && std::env::var_os("HERDR_NO_FORK_CHECK").is_none()
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -196,8 +196,11 @@ pub fn set_core(version: Option<String>, managed: Option<String>) {
     }
 }
 
+/// The app's own updates come from this fork's releases (`check_fork`), not from
+/// releases.herdr.dev, whose tarballs carry another name: only a test release
+/// server (`HERDR_RELEASES_URL`) is asked for the app here.
 fn checks_app() -> Option<PathBuf> {
-    root().filter(|_| option_env!("HERDR_APP_RELEASE").is_some() || std::env::var_os("HERDR_RELEASES_URL").is_some())
+    root().filter(|_| std::env::var_os("HERDR_RELEASES_URL").is_some())
 }
 
 /// A release build checks the core; a source build only when pointed at a test release server.
@@ -508,20 +511,20 @@ fn run(cmd: &mut Command) -> Result<(), String> {
 
 fn exe_in(app: &Path) -> PathBuf {
     if cfg!(target_os = "macos") {
-        app.join("Contents/MacOS/Herdr")
+        app.join("Contents/MacOS/Sunna")
     } else {
-        app.join(format!("herdr-app{}", std::env::consts::EXE_SUFFIX))
+        app.join(format!("sunna{}", std::env::consts::EXE_SUFFIX))
     }
 }
 
-/// What `herdr-app --version` says in this folder or bundle (`0.2.0`).
+/// What `sunna --version` says in this folder or bundle (`0.2.0`).
 fn version_of(app: &Path) -> Option<String> {
     let out = crate::spawn::command(exe_in(app)).arg("--version").stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
     let text = String::from_utf8_lossy(&out.stdout);
     if !out.status.success() {
         return None;
     }
-    text.trim().strip_prefix("herdr-app ").map(str::to_owned)
+    text.trim().strip_prefix("sunna ").map(str::to_owned)
 }
 
 /// `a` is a later version than `b` (semver; `0.2.0-rc.1` comes before `0.2.0`).
@@ -672,9 +675,9 @@ fn relaunch_expected(expected: Option<&str>) -> bool {
     let Some(root) = root() else { return false };
     // LaunchServices need not preserve the startup guard or an isolated home.
     let open = if cfg!(target_os = "macos") {
-        if expected.is_some() { "exec \"$1/Contents/MacOS/Herdr\"" } else { "open \"$1\"" }
+        if expected.is_some() { "exec \"$1/Contents/MacOS/Sunna\"" } else { "open \"$1\"" }
     } else {
-        "exec \"$1/herdr-app\""
+        "exec \"$1/sunna\""
     };
     let script = format!("while kill -0 \"$0\" 2>/dev/null; do sleep 0.1; done; {open}");
     let spawned = {
@@ -872,7 +875,7 @@ mod tests {
         let receipt = beside(&root, ".new.json");
         let exe = exe_in(&staged);
         std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
-        std::fs::write(&exe, "#!/bin/sh\necho herdr-app 0.1.8\n").unwrap();
+        std::fs::write(&exe, "#!/bin/sh\necho sunna 0.1.8\n").unwrap();
         std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert_eq!(staged_version(&root), None);
         assert!(staged.is_dir()); // Legacy stages are left for the checker.
@@ -976,7 +979,7 @@ mod tests {
         assert_eq!(release_signature(signature.status.success(), &String::from_utf8_lossy(&signature.stderr)), Ok(true));
         run(Command::new("/usr/bin/codesign").args(["--verify", "--deep", "--strict"]).arg(&app)).unwrap();
         run(Command::new("tar").arg("-xzf").arg(signed.join("app.tar.gz")).arg("-C").arg(&reference)).unwrap();
-        for file in ["Contents/Info.plist", "Contents/MacOS/Herdr", "Contents/_CodeSignature/CodeResources"] {
+        for file in ["Contents/Info.plist", "Contents/MacOS/Sunna", "Contents/_CodeSignature/CodeResources"] {
             assert_eq!(std::fs::read(app.join(file)).unwrap(), std::fs::read(reference.join(PACKED).join(file)).unwrap(), "{file} was modified");
         }
         for kind in ["adhoc", "unsigned"] {
