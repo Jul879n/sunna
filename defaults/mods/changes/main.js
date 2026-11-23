@@ -84,7 +84,9 @@ export default class Changes extends View {
       try {
         const top = await exec("git", ["rev-parse", "--show-toplevel"], { cwd, on });
         if (key() !== context) return;
-        if (top.code !== 0) { this.root = null; this.files = []; this.setLines([]); this.open = null; this.error = tr("changes.not_a_git_repository"); return; }
+        if (top.code !== 0) { this.root = null; this.files = []; this.setLines([]); this.open = null; // Only git's own "not a repository" gets the short text: a permission or PATH failure says what it is.
+          const why = (top.stderr ?? "").trim().split("\n")[0];
+          this.error = !why || /not a git repository/i.test(why) ? tr("changes.not_a_git_repository") : why; return; }
         const root = top.stdout.trim(), git = (args) => exec("git", [...READ, ...args], { cwd: root, on });
         const status = await git(["status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all"]);
         if (status.code !== 0) throw new Error(status.stderr);

@@ -31,6 +31,9 @@ const byId = (e: any, id: string) => { let r: any = null; walk(e, (n) => { if (n
 const home = "/home";
 const calls: any[] = [];
 const toasts: any[] = [];
+let repoTree: string[] = ["main.js"];
+// The gallery asks GitHub what a repo holds; the tests answer from `repoTree`.
+(globalThis as any).fetch = async () => ({ status: 200, json: async () => ({ tree: repoTree.map((path) => ({ path })) }) });
 function setup(tree: Record<string, string>) {
   const fs = memfs(tree);
   const values: Record<string, any> = {
@@ -127,4 +130,38 @@ test("clicking a gallery card opens its page, with Install and Back", async () =
   expect(page).not.toContain("st-cat-0");
   byId(section.render(palette, cx), "st-detail-back").__node.click({}, cx);
   expect(ids(section.render(palette, cx))).toContain("st-cat-0");
+});
+
+test("installing from a gallery page that holds no mod stays on the page and says why", async () => {
+  const { section, cx, settle } = await setup(tree());
+  section.tab = "explore";
+  section.found["herdr-mod"] = [{ full_name: "a/b", description: "d", stargazers_count: 3, pushed_at: new Date().toISOString(), html_url: "https://github.com/a/b" }];
+  byId(section.render(palette, cx), "st-cat-0").__node.click({}, cx);
+  byId(section.render(palette, cx), "st-detail-install").__node.click({}, cx);
+  await settle();
+  expect(section.detail).not.toBeNull();
+  expect(section.tab).toBe("explore");
+  expect(section.installError).toContain("No mods, themes or layouts found");
+  // Going back clears it.
+  byId(section.render(palette, cx), "st-detail-back").__node.click({}, cx);
+  expect(section.installError).toBeNull();
+});
+
+test("a gallery repo with nothing installable is flagged and Install does nothing", async () => {
+  repoTree = ["README.md", "src/lib.rs"];
+  try {
+    const { section, cx, settle } = await setup(tree());
+    section.tab = "explore";
+    section.found["herdr-mod"] = [{ full_name: "a/b", description: "d", stargazers_count: 3, pushed_at: new Date().toISOString(), html_url: "https://github.com/a/b" }];
+    byId(section.render(palette, cx), "st-cat-0").__node.click({}, cx);
+    section.render(palette, cx);
+    await settle();
+    expect(section.compat["a/b"]).toBe(false);
+    byId(section.render(palette, cx), "st-detail-install").__node.click({}, cx);
+    await settle();
+    expect(section.busy).toBe(false);
+    expect(section.installError).toBeNull();
+  } finally {
+    repoTree = ["main.js"];
+  }
 });

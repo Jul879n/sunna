@@ -5,11 +5,11 @@ import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { run, appHome, exec, notify, pickFolder, window, tr } from "herdr";
 import * as fs from "fs/promises";
 import { moveDir, removeDir, listDirs, scanCapabilities, readJson } from "./fsx.js";
-import { parseSource, fetchSource, scanSource, withExisting, installItems, latestCommit, catalog, ageDays } from "./store.js";
+import { parseSource, fetchSource, scanSource, withExisting, installItems, latestCommit, catalog, compatible, ageDays } from "./store.js";
 
 // The mods that ship in defaults/mods (a test keeps this list equal to the folder).
 export const SHIPPED_MODS = [
-  "agents", "awake-menu", "bots", "changes", "confirm", "files", "folders", "help", "machine-add", "menu", "new-menu", "pane", "peek",
+  "add-project", "agents", "awake-menu", "bots", "changes", "confirm", "files", "folders", "help", "machine-add", "menu", "new-menu", "pane", "peek",
   "picker", "prompt", "search", "spaces", "tabs", "terminals-bar", "terminals-pane", "toast", "win98", "workspace-chrome", "workspace-status", "worktree",
 ];
 
@@ -29,6 +29,7 @@ export class ModsSection {
     this.busy = false;
     this.detail = null; // the gallery entry whose page is open
     this.tab = "installed"; // "installed" | "explore"
+    this.installError = null; // why the last install could not start, shown where the person is looking
     this.review = null; // { src, dir, staging, commit, items, replace }: what an install would write
     this.latest = {}; // mod name -> newest commit of its source, once asked
     this.kind = "herdr-mod";
@@ -49,6 +50,8 @@ export class ModsSection {
   startInstall(input, cx, replace = null) {
     if (this.busy) return;
     this.busy = true;
+    this.installError = null;
+    cx.notify();
     cx.spawn(async (cx) => {
       try {
         const src = parseSource(input);
@@ -65,6 +68,7 @@ export class ModsSection {
           throw e;
         }
       } catch (e) {
+        this.installError = [tr(e.message), e.body].filter(Boolean).join(": ");
         notify({ level: "error", title: tr(e.message), body: e.body ?? undefined });
       }
       this.busy = false;
@@ -90,7 +94,7 @@ export class ModsSection {
         const source = r.src.kind === "github" ? r.src.label : r.src.kind === "git" ? r.src.url : r.src.path;
         const count = await installItems(chosen, { source, ref: r.src.ref ?? null, commit: r.commit }, r.replace);
         await this.dropStaging();
-        this.review = null;
+        this.review = null; this.detail = null; this.tab = "installed";
         notify({ title: tr("settings.mods_installed_n", { count }) });
         this.sourceInput.set_value("");
         this.source = "";
@@ -273,6 +277,12 @@ export class ModsSection {
     const r = this.detail;
     const [owner, repo] = r.full_name.split("/");
     this.loadImages(r, cx);
+    this.compat ??= {};
+    if (this.compat[r.full_name] === undefined) {
+      this.compat[r.full_name] = null;
+      cx.spawn(async (cx) => { this.compat[r.full_name] = await compatible(r.full_name); cx.notify(); });
+    }
+    const incompatible = this.compat[r.full_name] === false;
     const days = ageDays(r.pushed_at);
     const kindLabel = { "herdr-layout": "settings.mods_kind_layouts", "herdr-mod": "settings.mods_kind_mods", "herdr-theme": "settings.mods_kind_themes" }[this.kind];
     const facts = [
@@ -282,9 +292,10 @@ export class ModsSection {
       [tr("settings.mods_source"), r.full_name],
     ];
     return v_flex().w_full().gap(14)
-      .child(h_flex().child(h.button(t, "st-detail-back", tr("settings.mods_back"), (_e, cx) => { this.detail = null; cx.notify(); })))
+      .child(h_flex().child(h.button(t, "st-detail-back", tr("settings.mods_back"), (_e, cx) => { this.detail = null; this.installError = null; cx.notify(); })))
       .child(v_flex().w_full().rounded(12).border_1().border_color(t.border).bg(t.surface).overflow_hidden()
         .child(div().w_full().h(200).bg(t.raised).flex().items_center().justify_center().overflow_hidden()
+          .when(this.previews[r.full_name] !== "ok", (el) => el.child(svg("frame/settings/puzzle.svg").size(40).text_color(t.dim)))
           .when(this.previews[r.full_name] === "ok", (el) => el.child(image(`mod-store/cache/${owner}__${repo}.png`).h(200))))
         .child(v_flex().w_full().gap(10).p(16)
           .child(h_flex().w_full().gap(10).items_center()
@@ -294,11 +305,15 @@ export class ModsSection {
               .child(div().truncate().text_size(18).font_semibold().text_color(t.foreground).child(repo))
               .child(div().text_size(12).text_color(t.dim).child(`${owner} · ${tr(kindLabel)}`)))
             .child(h.button(t, "st-detail-github", tr("settings.mods_view_github"), () => openFolder(r.html_url)))
-            .child(h.button(t, "st-detail-install", this.busy ? tr("settings.mods_installing") : tr("settings.mods_install"), (_e, cx) => { this.tab = "installed"; this.startInstall(r.full_name, cx); })))
+            .child(h.button(t, "st-detail-install", this.busy ? tr("settings.mods_installing") : tr("settings.mods_install"), (_e, cx) => { if (!incompatible) this.startInstall(r.full_name, cx); })))
           .child(div().text_size(13).line_height("19px").text_color(t.muted).child(r.description ?? tr("settings.mods_no_description")))
           .child(v_flex().w_full().gap(4).pt(4).children(facts.map(([k, v]) =>
             h_flex().w_full().gap(10).child(div().w(90).flex_none().text_size(12).text_color(t.dim).child(k)).child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.foreground).child(v)))))
           .child(div().text_size(11.5).line_height("16px").text_color(t.dim).child(tr("settings.mods_trust_warning")))
+          .when(incompatible, (el) => el.child(div().text_size(12.5).line_height("18px").text_color(t.blocked).child(tr("settings.mods_incompatible"))))
+          .when(this.busy && this.review === null, (el) => el.child(div().text_size(12.5).text_color(t.muted).child(tr("settings.mods_installing"))))
+          .when(Boolean(this.installError) && !this.busy, (el) => el.child(div().text_size(12.5).line_height("18px").text_color(t.blocked).child(this.installError)))
+          .when(this.review !== null, (el) => el.child(this.reviewPanel(t, cx)))
           ));
   }
 
@@ -337,7 +352,8 @@ export class ModsSection {
         return v_flex().id(`st-cat-${i}`).w(WIDTH).h(216).flex_none().rounded(10).border_1().border_color(t.border).bg(t.surface).overflow_hidden()
           .cursor_pointer().hover((s) => s.bg(t.raised))
           .on_click((_e, cx) => { this.detail = r; cx.notify(); })
-          .child(div().w_full().h(108).flex_none().bg(t.raised).overflow_hidden()
+          .child(div().w_full().h(108).flex_none().bg(t.raised).overflow_hidden().flex().items_center().justify_center()
+            .when(this.previews[r.full_name] !== "ok", (el) => el.child(svg("frame/settings/puzzle.svg").size(28).text_color(t.dim)))
             .when(this.previews[r.full_name] === "ok", (el) => el.child(image(`mod-store/cache/${owner}__${repo}.png`).w(WIDTH).h(108))))
           .child(h_flex().w_full().gap(8).p(8).items_center().flex_none()
             .child(div().size(28).flex_none().rounded(8).bg(t.raised).overflow_hidden()
@@ -366,8 +382,9 @@ export class ModsSection {
     return v_flex().w_full().gap(12)
       .child(h_flex().child(h.segmented(t, "mods-tab", [["installed", "settings.mods_tab_installed"], ["explore", "settings.mods_tab_explore"]], this.tab, (v, cx) => { this.tab = v; cx.notify(); })))
       .child(this.installBox(t, cx))
-      .when(this.review !== null, (el) => el.child(this.reviewPanel(t, cx)))
-      .when(this.busy && this.review === null, (el) => el.child(div().text_size(12.5).text_color(t.dim).child(tr("settings.mods_installing"))))
+      .when(this.review !== null && !this.detail, (el) => el.child(this.reviewPanel(t, cx)))
+      .when(this.busy && this.review === null && !this.detail, (el) => el.child(div().text_size(12.5).text_color(t.dim).child(tr("settings.mods_installing"))))
+      .when(Boolean(this.installError) && !this.busy && !this.detail, (el) => el.child(div().text_size(12.5).line_height("18px").text_color(t.blocked).child(this.installError)))
       .when(this.tab === "explore", (el) => el.child(this.explore(t, cx)))
       .when(this.tab === "installed", (el) =>
         el.child(v_flex().w_full().gap(10).children(on.map((m) => this.card(t, m, list.indexOf(m)))))

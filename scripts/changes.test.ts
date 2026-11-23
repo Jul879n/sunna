@@ -94,3 +94,17 @@ test("the history tab lists the last commits", async () => {
   expect(byId(list, "git-c-1")).not.toBeNull();
   expect(byId(list, "git-c-2")).toBeNull();
 });
+
+test("a git failure that is not 'not a repository' shows git's own message", async () => {
+  execLog.length = 0;
+  answer = (a) => a[0] === "rev-parse" ? { code: 128, stdout: "", stderr: "fatal: cannot change to '/repo': Operation not permitted\n" } : { code: 0, stdout: "" };
+  const v = new ChangesView();
+  v.init({}, cx);
+  await settle();
+  expect(v.error).toBe("fatal: cannot change to '/repo': Operation not permitted");
+  answer = (a) => a[0] === "rev-parse" ? { code: 128, stdout: "", stderr: "fatal: not a git repository (or any of the parent directories): .git\n" } : { code: 0, stdout: "" };
+  const w = new ChangesView();
+  w.init({}, cx);
+  await settle();
+  expect(w.error).toBe("changes.not_a_git_repository");
+});
