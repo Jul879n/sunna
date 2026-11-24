@@ -24,6 +24,9 @@ async function checkout(folder, on) {
   return common.stdout.trim() === `${top.stdout.trim()}/.git` ? "main" : "linked";
 }
 
+// Settings > General > Open in: the apps to open a local folder with (macOS: an app's name; elsewhere: a command).
+const openIn = (folder, machine) => (folder && !machine && Array.isArray(shared("menu.open_in")) ? shared("menu.open_in") : []).map((app) => [tr("menu.open_in_app", { app }), "open_in", { folder, app }]);
+
 function items(p, git) {
   p = p ?? {};
   const tg = p.target ?? {};
@@ -63,17 +66,23 @@ function items(p, git) {
         [tr("menu.new_tab"), "tab.new", { space: tg.space }],
         [tr("menu.close"), "tab.close", { id: tg.id }],
       ];
-    case "space":
+    case "space": {
+      const sp = spaces().find((x) => x.id === tg.id);
+      const folder = sp && place(sp);
+      const here = folder ? { folder, machine: sp.machine ?? null } : null;
       return [
         [tr("menu.rename"), "space.rename", { id: tg.id }],
         ...(git ? [[tr("menu.new_worktree"), "worktree", { space: tg.id, action: "new" }], [tr("menu.open_worktree"), "worktree", { space: tg.id, action: "open" }]] : []),
         ...(git === "linked" ? [[tr("menu.remove_worktree"), "worktree", { space: tg.id, action: "remove" }]] : []),
+        ...(here ? [...(here.machine ? [] : [[tr("menu.reveal_folder"), "reveal", { folder: here.folder }]]), ...openIn(here.folder, here.machine), [tr("menu.copy_path"), "copy", { text: here.folder }]] : []),
         [tr("menu.close"), "space.close", { id: tg.id }],
       ];
+    }
     case "project":
       return [
-        ...(tg.repo ? [[tr("menu.new_worktree"), "worktree", { space: tg.id, folder: tg.folder, action: "new" }]] : []),
+        ...(tg.repo ? [[tr("menu.new_worktree"), "worktree", { space: tg.id, folder: tg.folder, action: "new" }], [tr("menu.open_worktree"), "worktree", { space: tg.id, folder: tg.folder, action: "open" }], [tr("menu.clean_worktrees"), "worktree", { space: tg.id, folder: tg.folder, action: "cleanup" }]] : []),
         ...(tg.machine ? [] : [[tr("menu.reveal_folder"), "reveal", { folder: tg.folder }]]),
+        ...openIn(tg.folder, tg.machine),
         [tr("menu.copy_path"), "copy", { text: tg.folder }],
         [tr("menu.hide_project"), "hide", { key: tg.key }],
       ];
@@ -90,7 +99,7 @@ function items(p, git) {
 }
 
 function menuIcon(command) {
-  const name = command.endsWith(".close") ? "x" : command.endsWith(".rename") ? "square-pen" : command.endsWith(".new") ? "plus" : command === "worktree" ? "git-branch" : command === "reveal" ? "folder" : command === "copy" ? "files" : command === "hide" ? "minus" : command === "app.help" ? "terminal" : command === "app.theme" ? "settings" : command === "pane.split" ? "panel-right" : command === "pane.zoom" ? "square" : "terminal";
+  const name = command.endsWith(".close") ? "x" : command.endsWith(".rename") ? "square-pen" : command.endsWith(".new") ? "plus" : command === "worktree" ? "git-branch" : command === "reveal" || command === "open_in" ? "folder" : command === "copy" ? "files" : command === "hide" ? "minus" : command === "app.help" ? "terminal" : command === "app.theme" ? "settings" : command === "pane.split" ? "panel-right" : command === "pane.zoom" ? "square" : "terminal";
   return `mods/workspace-chrome/${name}.svg`;
 }
 
@@ -122,10 +131,13 @@ export default class Menu extends View {
     const it = items(props(), this.git)[i];
     if (!it) return;
     closeOverlay(props()?.overlay);
-    if (it[1] === "worktree") openOverlay({ mod: "worktree", kind: "dialog", ...(it[2].action === "open" ? { width: 560, height: 480 } : { width: 440, height: 260 }), props: it[2] });
+    if (it[1] === "worktree") openOverlay({ mod: "worktree", kind: "dialog", ...(it[2].action === "open" || it[2].action === "cleanup" ? { width: 560, height: 480 } : { width: 440, height: 260 }), props: it[2] });
     else if (it[1] === "reveal") {
       const os = window().platform;
       exec(os === "macos" ? "open" : os === "windows" ? "explorer" : "xdg-open", [it[2].folder]).catch(() => {});
+    } else if (it[1] === "open_in") {
+      const { app, folder } = it[2], os = window().platform;
+      exec(...(os === "macos" ? ["open", ["-a", app, folder]] : os === "windows" ? ["cmd", ["/c", "start", "", app, folder]] : [app, [folder]])).catch(() => {});
     } else if (it[1] === "copy") cx.write_to_clipboard(it[2].text);
     else if (it[1] === "hide") setShared("space.hidden", [...new Set([...(shared("space.hidden") ?? []), it[2].key])]);
     else run(it[1], it[2]);

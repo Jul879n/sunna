@@ -4,7 +4,14 @@ use gpui_shell::action::ShellAction;
 actions!(herdr, [Quit, Hide, HideOthers, ShowAll, Settings]);
 
 pub fn init(cx: &mut App) {
-    cx.on_action(|_: &Quit, cx| cx.quit());
+    cx.on_action(|_: &Quit, cx| {
+        // Files edited and not saved: the window asks before the app leaves.
+        if crate::window::unsaved_files() > 0 {
+            crate::mods::request(crate::mods::Request::Run { name: "app.quit".into(), args: serde_json::json!({}) });
+        } else {
+            cx.quit();
+        }
+    });
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());

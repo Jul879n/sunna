@@ -1,8 +1,8 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Scrollbar } from "gpui-base";
-import { spaces, agents, run, exec, knownAgents, readTextFile, writeTextFile, pickFolder, notify, shared, setShared, appHome, home, checking, theme, tr, style } from "herdr";
-import { readdir, mkdir } from "fs/promises";
-import { TEMPLATES, CATEGORIES, NAME, purpose, runsToday, dueTriggers, withRun, startsOff, filterTemplates } from "./templates.js";
+import { spaces, agents, run, exec, knownAgents, readTextFile, writeTextFile, pickFolder, notify, shared, appHome, home, checking, theme, tr, style } from "herdr";
+import { readdir, mkdir, unlink, rmdir } from "fs/promises";
+import { TEMPLATES, CATEGORIES, NAME, purpose, runsToday, dueTriggers, withRun, startsOff, filterTemplates, nextRunAt, relTime, scheduleOf } from "./templates.js";
 
 // Radius scale: the theme's `style.radius` (6 = the original sizes).
 const R = (n) => Math.round(n * style().radius / 6);
@@ -15,6 +15,13 @@ const DEFAULT_BOT = { agent: "claude", folder: "~", enabled: true, yolo: false, 
 async function readJson(path, fallback) {
   try { return JSON.parse((await readTextFile(path)) ?? "null") ?? fallback; } catch { return fallback; }
 }
+async function removeTree(path) {
+  for (const e of await readdir(path, { withFileTypes: true })) {
+    if (e.isDirectory()) await removeTree(`${path}/${e.name}`);
+    else await unlink(`${path}/${e.name}`);
+  }
+  await rmdir(path);
+}
 // writeTextFile replaces only what it last saw: read first.
 async function save(path, text) { await writeTextFile(path, text, await readTextFile(path)); }
 
@@ -25,7 +32,7 @@ export default class Bots extends View {
     this.gallery = null; // { category } while the gallery is shown
     this.searchInput = InputState.new({ placeholder: tr("bots.templates_search") });
     this.searchInput.on("change", () => { if (this.gallery) this.gallery.query = this.searchInput.value(); });
-    this.bots = []; this.form = null; this.history = null; this.busy = false; this.launching = new Set();
+    this.bots = []; this.loaded = false; this.form = null; this.history = null; this.busy = false; this.launching = new Set(); this.deleting = null; this.blocked = {};
     this.nameInput = InputState.new({ placeholder: "my-bot" });
     this.nameInput.on("change", () => { if (this.form) this.form.name = this.nameInput.value().trim(); });
     this.load(cx);
@@ -42,6 +49,7 @@ export default class Bots extends View {
       config: { ...DEFAULT_BOT, ...(await readJson(`${dir(name)}/bot.json`, {})) },
       state: await readJson(`${dir(name)}/runs.json`, { runs: [], seen: [], last_poll: {} }),
     })));
+    this.loaded = true;
     cx.notify();
   }
 
@@ -112,13 +120,24 @@ export default class Bots extends View {
     // One at a time: skip while the previous run's agent is still working.
     const prev = (bot.state.runs ?? []).at(-1);
     if (prev && agents().some((a) => a.tab_name === prev.tab && a.status === "working")) return false;
+    const n = (bot.state.runs?.length ? bot.state.runs.at(-1).id : 0) + 1;
+    // A note in the history for a run that did not start: it also keeps a daily trigger from trying again every minute.
+    const note = async (status) => { bot.state = withRun(bot.state, { id: n, at: new Date(now).toISOString(), trigger, tab: null, status }); await this.persist(bot); return false; };
+    // The precheck is a command: when it fails the run is skipped. "Run now" ignores it.
+    if (trigger !== "manual" && config.precheck) {
+      let ok = false;
+      try { ok = (await exec("sh", ["-c", config.precheck], { cwd: this.cwd(bot) })).code === 0; } catch {}
+      if (!ok) return note("skipped");
+    }
     let agent;
     try { agent = (await knownAgents()).find((a) => a.key === config.agent && a.installed); } catch {}
-    if (!agent) { notify({ level: "error", title: tr("bots.agent_missing", { agent: config.agent }) }); return false; }
+    if (!agent) {
+      notify({ level: "error", title: tr("bots.agent_missing", { agent: config.agent }) });
+      return trigger === "manual" ? false : note("failed");
+    }
     // A github item is text from outside: never with the permission prompts off.
     const argv = config.yolo && trigger !== "github" ? agent.yolo : agent.base;
     const task = `${bot.soul}\n\n---\n${tr("bots.trigger_context", { trigger, item })}`;
-    const n = (bot.state.runs?.length ? bot.state.runs.at(-1).id : 0) + 1;
     const tab = `bot ${bot.name} #${n}`, space = spaces().find((s) => s.name === `bot: ${bot.name}`);
     if (space) run("tab.new", { space: space.id, name: tab, folder: this.cwd(bot), argv, task, focus: false });
     else run("space.new", { name: `bot: ${bot.name}`, tab, folder: this.cwd(bot), argv, task, focus: false });
@@ -137,9 +156,22 @@ export default class Bots extends View {
     cx.notify();
   }
 
+  // Why "Run now" would be refused, so the card says it instead of a toast: null when it can start.
+  whyNot(bot, now = Date.now()) {
+    if (runsToday(bot.state.runs ?? [], now) >= bot.config.max_runs_per_day) return tr("bots.why_cap");
+    if (this.liveState(bot) === "working") return tr("bots.why_busy");
+    return null;
+  }
+
+  async remove(bot, cx) {
+    if (!NAME.test(bot.name)) return;
+    await removeTree(dir(bot.name));
+    this.deleting = null; this.history = this.history === bot.name ? null : this.history;
+    await this.load(cx);
+  }
+
   openSoul(bot) {
-    setShared("files.reveal", { path: `${dir(bot.name)}/SOUL.md`, line: 1, at: Date.now() });
-    run("layout.select", { stack: "panel-body", child: "files" });
+    run("file.open", { path: `${dir(bot.name)}/SOUL.md`, line: 1, on: "" });
   }
 
   newForm(cx, template = "blank") {
@@ -168,10 +200,29 @@ export default class Bots extends View {
 
   // Render ------------------------------------------------------------------
 
-  nextRun(bot) {
-    const trg = bot.config.triggers.find((x) => x.type === "interval" || x.type === "daily" || x.type === "github");
-    if (!trg) return tr("bots.trigger_manual");
-    return tr(`bots.trigger_${trg.type}`);
+  // "diario 09:00", "cada 10 min", "manual": what starts it.
+  schedule(bot) {
+    const s = scheduleOf(bot.config);
+    return s ? tr(`bots.schedule_${s.type}`, { at: s.at ?? "", min: s.minutes ?? "" }) : tr("bots.trigger_manual");
+  }
+
+  // "en 2 h", "hace 5 min": a moment against now.
+  rel(ms, now = Date.now()) {
+    const r = relTime(ms, now);
+    return r.unit === "now" ? tr("bots.rel_now") : tr(r.ahead ? "bots.rel_in" : "bots.rel_ago", { n: r.n, unit: tr(`bots.unit_${r.unit}`) });
+  }
+
+  dot(color, hollow = false) {
+    return div().size(8).flex_none().rounded_full().when(hollow, (el) => el.border_1().border_color(color)).when(!hollow, (el) => el.bg(color));
+  }
+
+  // One run's dot: working, blocked or done by its tab's agent; hollow when the tab is gone.
+  runTone(t, r) {
+    if (r.status === "failed") return { color: t.blocked, hollow: false };
+    if (r.status === "skipped") return { color: t.dim, hollow: true };
+    const a = agents().find((x) => x.tab_name === r.tab);
+    if (!a) return { color: t.dim, hollow: true };
+    return { color: a.status === "working" ? t.working : a.status === "blocked" ? t.blocked : t.done ?? t.accent, hollow: false };
   }
 
   chip(t, id, label, on, pick) {
@@ -187,35 +238,60 @@ export default class Bots extends View {
   }
 
   card(t, bot) {
+    const now = Date.now();
     const last = bot.state.runs?.at(-1);
     const btn = (id, label, action) => this.chip(t, id, label, false, action);
     const live = this.liveState(bot);
     const tone = live === "working" ? t.working : live === "idle" ? t.done ?? t.accent : t.dim;
     const hue = MARK[[...bot.name].reduce((n, c) => n + c.charCodeAt(0), 0) % MARK.length];
-    const meta = (label) => div().h(20).px(7).flex().items_center().rounded(R(6)).bg(t.raised).text_size(11).text_color(t.muted).child(label);
+    const next = bot.config.enabled ? nextRunAt(bot.config, bot.state, now) : null;
+    const why = this.whyNot(bot, now);
+    const meta = (el) => h_flex().h(20).gap(6).items_center().text_size(11).text_color(t.muted).child(el);
+    const lastTone = last ? this.runTone(t, last) : null;
     return v_flex().id(`bot-${bot.name}`).w_full().flex_none().p(12).gap(10).rounded(R(10)).border_1().border_color(t.border).bg(t.surface)
-      .child(h_flex().gap(10).items_start()
-        .child(div().size(34).flex_none().rounded(R(9)).bg(hue).flex().items_center().justify_center().text_size(15).font_bold().text_color("#ffffff").child([...bot.name][0]?.toUpperCase() ?? "?"))
+      .child(h_flex().gap(12).items_start()
+        .child(div().size(32).flex_none().rounded(R(9)).bg(hue).flex().items_center().justify_center().text_size(15).font_bold().text_color("#ffffff").child([...bot.name][0]?.toUpperCase() ?? "?"))
         .child(v_flex().flex_1().min_w(0).gap(2)
           .child(div().truncate().font_semibold().text_size(14).child(bot.name))
+          .child(div().truncate().text_size(11).text_color(t.dim).child(`${bot.config.agent} · ${this.schedule(bot)}`))
           .child(div().text_size(12).line_height("16px").max_h(32).overflow_hidden().text_color(t.muted).child(purpose(bot.soul))))
-        .child(this.chip(t, `bot-on-${bot.name}`, tr(`bots.status_${live}`), live !== "off", (cx) => this.setEnabled(bot, !bot.config.enabled, cx))
-          .child(div().size(6).ml(6).rounded_full().bg(tone))))
-      .child(h_flex().gap(6).flex_wrap()
-        .child(meta(bot.config.agent)).child(meta(this.nextRun(bot)))
-        .child(meta(`${tr("bots.last_run")}: ${last ? new Date(last.at).toLocaleString() : tr("bots.never")}`)))
-      .child(h_flex().gap(6)
-        .child(btn(`bot-run-${bot.name}`, tr("bots.run_now"), (cx) => cx.spawn(async (cx) => {
-          if (!(await this.launch(bot, "manual", ""))) notify({ title: tr("bots.not_started") });
-          cx.notify();
-        })))
+        .child(h_flex().id(`bot-state-${bot.name}`).h(24).px(8).gap(6).items_center().flex_none().rounded(R(6)).bg(t.raised).text_size(11).text_color(t.muted)
+          .child(this.dot(tone, live === "off")).child(tr(`bots.status_${live}`))))
+      .child(v_flex().gap(4)
+        .child(meta(this.dot(t.dim, true)).child(div().child(`${tr("bots.next_run")}: ${live === "off" ? tr("bots.paused") : next ? this.rel(next, now) : tr("bots.trigger_manual")}`)))
+        .child(meta(last ? this.dot(lastTone.color, lastTone.hollow) : this.dot(t.dim, true)).child(div().child(`${tr("bots.last_run")}: ${last ? this.rel(Date.parse(last.at), now) : tr("bots.never")}`))))
+      .child(h_flex().gap(6).items_center().flex_wrap()
+        .child(div().id(`bot-run-${bot.name}`).h(28).px(12).flex().items_center().rounded(R(7)).text_size(12).font_semibold()
+          .when(!why, (el) => el.bg(t.accent).text_color(t.accent_foreground ?? t.background).cursor_pointer().hover((s) => s.opacity(0.9)))
+          .when(Boolean(why), (el) => el.bg(t.raised).text_color(t.dim))
+          .on_click((_e, cx) => { if (why) return; cx.spawn(async (cx) => { if (!(await this.launch(bot, "manual", ""))) notify({ title: tr("bots.not_started") }); cx.notify(); }); })
+          .child(tr("bots.run_now")))
+        .child(btn(`bot-on-${bot.name}`, tr(bot.config.enabled ? "bots.pause" : "bots.resume"), (cx) => this.setEnabled(bot, !bot.config.enabled, cx)))
         .child(btn(`bot-soul-${bot.name}`, tr("bots.edit_soul"), () => this.openSoul(bot)))
-        .child(btn(`bot-hist-${bot.name}`, tr("bots.detail"), () => { this.history = this.history === bot.name ? null : bot.name; })))
+        .child(btn(`bot-hist-${bot.name}`, tr("bots.detail"), () => { this.history = this.history === bot.name ? null : bot.name; }))
+        .child(div().flex_1())
+        .child(this.deleting === bot.name
+          ? h_flex().gap(6)
+            .child(this.chip(t, `bot-del-yes-${bot.name}`, tr("bots.delete_confirm"), true, (cx) => this.remove(bot, cx)).text_color(t.blocked))
+            .child(btn(`bot-del-no-${bot.name}`, tr("settings.cancel"), () => { this.deleting = null; }))
+          : btn(`bot-del-${bot.name}`, tr("bots.delete"), () => { this.deleting = bot.name; })))
+      .when(Boolean(why), (el) => el.child(div().text_size(11).text_color(t.muted).child(why)))
       .when(this.history === bot.name, (el) => el.child(this.detail(t, bot)))
-      .when(this.history === bot.name, (el) => el.children((bot.state.runs ?? []).slice().reverse().slice(0, 20).map((r) =>
-        div().id(`bot-r-${bot.name}-${r.id}`).h(22).px(6).flex().items_center().rounded(R(6)).text_size(11).text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover))
+      .when(this.history === bot.name, (el) => el.child(this.runsView(t, bot, now)));
+  }
+
+  // The latest runs, newest first, each with its agent's state as a dot.
+  runsView(t, bot, now) {
+    const runs = (bot.state.runs ?? []).slice().reverse().slice(0, 8);
+    return v_flex().gap(2)
+      .child(h_flex().gap(6).text_size(11).font_semibold().text_color(t.muted).child(div().child(tr("bots.recent_runs"))).child(div().text_color(t.dim).child(String(bot.state.runs?.length ?? 0))))
+      .when(runs.length === 0, (el) => el.child(div().text_size(11).text_color(t.dim).child(tr("bots.no_runs"))))
+      .children(runs.map((r) => {
+        const tone = this.runTone(t, r);
+        return h_flex().id(`bot-r-${bot.name}-${r.id}`).h(28).px(6).gap(8).items_center().rounded(R(6)).text_size(11).text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover))
           .on_click(() => { const tab = spaces().flatMap((s) => s.tabs).find((x) => x.name === r.tab); if (tab) run("tab.select", { id: tab.id }); })
-          .child(`#${r.id} · ${r.trigger} · ${new Date(r.at).toLocaleString()}`))));
+          .child(this.dot(tone.color, tone.hollow)).child(div().flex_1().truncate().child(`#${r.id} · ${r.trigger}${r.status ? ` · ${tr(`bots.run_${r.status}`)}` : ""}`)).child(div().flex_none().text_color(t.dim).child(this.rel(Date.parse(r.at), now)));
+      }));
   }
 
   // Where it runs and what it can do: the bot acts as the person, so this says so before they switch it on.
@@ -235,16 +311,32 @@ export default class Bots extends View {
     cx.notify();
   }
 
+  // A template as a card: the whole card starts a bot from it.
+  templateCard(t, [id, tpl]) {
+    const key = id.replace(/-/g, "_"), sched = scheduleOf(tpl);
+    return v_flex().id(`bot-tpl-card-${id}`).w_full().flex_none().p(12).gap(6).rounded(R(10)).border_1().border_color(t.border).bg(t.surface).cursor_pointer().hover((s) => s.bg(t.hover))
+      .on_click((_e, cx) => this.newForm(cx, id))
+      .child(div().text_size(11).text_color(t.dim).child(tr(`bots.cat_${tpl.category}`)))
+      .child(div().truncate().font_semibold().text_size(13).child(tr(`bots.template_${key}`)))
+      .child(div().text_size(12).line_height("16px").max_h(32).overflow_hidden().text_color(t.muted).child(tr(`bots.first_${key}`)))
+      .child(div().text_size(11).text_color(t.dim).child(sched ? tr(`bots.schedule_${sched.type}`, { at: sched.at ?? "", min: sched.minutes ?? "" }) : tr("bots.trigger_manual")));
+  }
+
+  // No bot yet: say so and offer the templates, like Orca's first screen.
+  emptyView(t) {
+    return v_flex().id("bots-empty").absolute().inset_0().overflow_y_scroll().p(12).gap(8)
+      .child(div().font_semibold().text_size(14).child(tr("bots.empty_title")))
+      .child(div().text_size(12).text_color(t.muted).child(tr("bots.templates_note")))
+      .children(Object.entries(TEMPLATES).filter(([id]) => id !== "blank").map((e) => this.templateCard(t, e)))
+      .child(div().id("bot-empty-blank").w_full().h(32).flex().items_center().justify_center().rounded(R(8)).border_1().border_color(t.border).text_size(12).text_color(t.foreground).cursor_pointer().hover((s) => s.bg(t.hover))
+        .on_click((_e, cx) => this.newForm(cx, "blank")).child(tr("bots.templates_blank")));
+  }
+
   // The templates: search, a category filter, and for each what it does first.
   galleryView(t) {
     const g = this.gallery, key = (id) => id.replace(/-/g, "_");
     const found = filterTemplates(g.query, g.category, (id) => this.label(id));
-    const card = ([id, tpl]) => v_flex().id(`bot-tpl-card-${id}`).w_full().flex_none().p(10).gap(6).rounded(R(10)).border_1().border_color(t.border).bg(t.surface)
-      .child(h_flex().gap(8).items_center()
-        .child(div().flex_1().min_w(0).truncate().font_semibold().text_size(13).child(tr(`bots.template_${key(id)}`)))
-        .child(div().h(18).px(6).flex().items_center().rounded(R(6)).bg(t.raised).text_size(10.5).text_color(t.muted).child(tr(`bots.cat_${tpl.category}`))))
-      .child(div().text_size(11.5).line_height("16px").text_color(t.muted).child(`${tr("bots.template_first")}: ${tr(`bots.first_${key(id)}`)}`))
-      .child(h_flex().child(this.chip(t, `bot-tpl-use-${id}`, tr("bots.template_use"), false, (cx) => this.newForm(cx, id))));
+    const card = (entry) => this.templateCard(t, entry);
     return v_flex().flex_1().min_h(0).child(
       v_flex().flex_none().p(10).gap(8).border_b(1).border_color(t.border)
         .child(div().id("bot-search").h(30).px(10).flex().items_center().rounded(R(8)).border_1().border_color(t.border)
@@ -294,7 +386,9 @@ export default class Bots extends View {
       .when(Boolean(this.form), (el) => el.child(this.formView(t)))
       .when(Boolean(this.gallery), (el) => el.child(this.galleryView(t)))
       .when(!this.gallery, (el) => el.child(div().flex_1().min_h(0).relative()
-        .child(v_flex().id("bots-list").absolute().inset_0().overflow_y_scroll().p(8).gap(8).children(this.bots.map((b) => this.card(t, b))))
-        .child(Scrollbar.vertical("bots-list").absolute().inset_0())));
+        .when(this.loaded && this.bots.length === 0 && !this.form, (el) => el.child(this.emptyView(t)))
+        .when(this.bots.length > 0 || !this.loaded || Boolean(this.form), (el) => el
+          .child(v_flex().id("bots-list").absolute().inset_0().overflow_y_scroll().p(8).gap(8).children(this.bots.map((b) => this.card(t, b))))
+          .child(Scrollbar.vertical("bots-list").absolute().inset_0()))));
   }
 }

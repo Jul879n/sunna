@@ -34,26 +34,31 @@ function harness(focusedMachine: string | null = null, raw: string | null = null
   const writes: unknown[] = [];
   const destinations: (string | null)[] = [];
   const executions: any[] = [];
+  const overlays: any[] = [];
+  let current: any = { overlay: "overlay" };
+  let liveAgents: any[] = [];
+  let reply: ((command: string, args: string[], options: any) => any) | null = null;
   const globals = {
-    View: class {}, div: element, v_flex: element, h_flex: element,
+    agents: () => liveAgents,
+    View: class {}, div: element, svg: element, v_flex: element, h_flex: element,
     tr, Input: { new: element }, Scrollbar: { vertical: element }, theme: () => ({}),
     appHome: () => "/app", readTextFile: async () => raw,
     spaces: () => { reads.spaces++; return structuredClone(spaceList); },
     panes: () => { reads.panes++; return structuredClone(paneList); },
-    props: () => ({ overlay: "overlay" }), closeOverlay: () => {},
+    props: () => current, closeOverlay: () => {}, openOverlay: (overlay: any) => { overlays.push(overlay); },
     run: (command: string, args: any) => {
       writes.push([command, args]);
       if (command === "space.new") destinations.push(args.machine === "" ? null : args.machine ?? focusedMachine);
     },
     exec: async (command: string, args: string[], options: any) => {
       executions.push({ command, args, ...options });
-      return { code: 0, stdout: "", stderr: "" };
+      return (reply && reply(command, args, options)) ?? { code: 0, stdout: "", stderr: "" };
     },
   };
   const { Worktree, root } = new Function(...Object.keys(globals), `${source}; return { Worktree, root };`)(...Object.values(globals));
   const worktree = new Worktree();
   Object.assign(worktree, { opening: true, text: "", at: 0, repo: { name: "repo" }, userHome: "/home/user", root: "/home/user/.herdr/worktrees" });
-  return { worktree, root, reads, writes, destinations, executions, snapshot: (spaces: unknown[], panes: unknown[]) => { spaceList = spaces; paneList = panes; } };
+  return { worktree, root, reads, writes, destinations, executions, overlays, setAgents: (a: any[]) => { liveAgents = a; }, setReply: (f: typeof reply) => { reply = f; }, setProps: (next: any) => { current = { overlay: "overlay", ...next }; }, snapshot: (spaces: unknown[], panes: unknown[]) => { spaceList = spaces; paneList = panes; } };
 }
 
 test("open render reads spaces and panes once and refreshes both on the next render", () => {
@@ -201,4 +206,106 @@ test("missing settings keep the old location, while invalid directories cannot c
     await expect(root("/home/user")).rejects.toThrow("worktrees.directory");
   }
   await expect(harness(null, "{").root("/home/user")).rejects.toThrow();
+});
+
+function nodesOf(node: any, pick: (n: any) => boolean): any[] {
+  return [...(pick(node) ? [node] : []), ...(node?.children ?? []).flatMap((c: any) => nodesOf(c, pick))];
+}
+
+test("each linked checkout has a remove button and the main one has none", () => {
+  const { worktree, snapshot } = harness();
+  worktree.list = [{ path: "/repo", branch: "main", main: true, at: 0 }, { path: "/repo/wt", branch: "feat", at: 0 }];
+  snapshot([], []);
+  const tree = worktree.render({}).node;
+  const ids = nodesOf(tree, (n) => /^wt-remove-\d+$/.test(n.id ?? "")).map((n) => n.id);
+  expect(ids).toEqual(["wt-remove-1"]);
+});
+
+test("a row's remove opens the remove dialog for that checkout, with its space when it has one", () => {
+  const { worktree, overlays, snapshot } = harness();
+  const checkout = { path: "/repo/wt", branch: "feat", at: 0 };
+  worktree.list = [checkout];
+  snapshot([{ id: "s1", tabs: [{ id: "t1" }] }], [{ tab: "t1", cwd: checkout.path }]);
+  worktree.removeRow(checkout);
+  expect(overlays).toHaveLength(1);
+  expect(overlays[0]).toMatchObject({ mod: "worktree", kind: "dialog", props: { action: "remove", space: "s1", folder: "/repo/wt", name: "feat" } });
+  snapshot([], []);
+  worktree.removeRow(checkout);
+  expect(overlays[1].props.space).toBeUndefined();
+});
+
+test("removing a checkout with no space open deletes it without closing any space", async () => {
+  const { worktree, writes, executions, setProps } = harness();
+  setProps({ action: "remove", folder: "/repo/wt", name: "feat" });
+  Object.assign(worktree, { opening: false, repo: { name: "repo", main: "/repo", top: "/repo/wt", linked: true }, dirty: false, unpushed: [] });
+  expect(await worktree.remove()).toBe("");
+  expect(writes.some(([command]: any) => command === "space.close")).toBe(false);
+  expect(executions.at(-1).args).toEqual(["worktree", "remove", "/repo/wt"]);
+});
+
+test("removing a checkout that has a space closes that space first", async () => {
+  const { worktree, writes, snapshot, setProps } = harness();
+  snapshot([{ id: "s1", tabs: [] }], []);
+  setProps({ action: "remove", space: "s1" });
+  Object.assign(worktree, { opening: false, repo: { name: "repo", main: "/repo", top: "/repo/wt", linked: true }, dirty: false, unpushed: [] });
+  expect(await worktree.remove()).toBe("");
+  expect(writes[0]).toEqual(["space.close", { id: "s1", confirmed: true }]);
+});
+
+test("a repo with only its main checkout says what worktrees are for and offers a new one", () => {
+  const { worktree, overlays, snapshot, setProps } = harness();
+  worktree.list = [{ path: "/repo", branch: "main", main: true, at: 0 }];
+  worktree.folder = "/repo";
+  setProps({ space: "s1" });
+  snapshot([], []);
+  const tree = worktree.render({}).node;
+  expect(nodesOf(tree, (n) => n.id === "wt-empty")).toHaveLength(1);
+  worktree.text = "xyz";
+  expect(nodesOf(worktree.render({}).node, (n) => n.id === "wt-empty")).toHaveLength(0);
+  worktree.newFromList();
+  expect(overlays[0]).toMatchObject({ mod: "worktree", props: { action: "new", space: "s1", folder: "/repo" } });
+  worktree.list = [{ path: "/repo", branch: "main", main: true, at: 0 }, { path: "/repo/wt", branch: "feat", at: 0 }];
+  worktree.text = "";
+  expect(nodesOf(worktree.render({}).node, (n) => n.id === "wt-empty")).toHaveLength(0);
+});
+
+test("cleanup lists each linked checkout with its evidence and preselects merged, clean, idle ones", async () => {
+  const { worktree, snapshot, setAgents, setReply, setProps } = harness();
+  setProps({ action: "cleanup" });
+  snapshot([{ id: "s2", tabs: [{ id: "t2" }] }], [{ tab: "t2", cwd: "/repo/busy" }]);
+  setAgents([{ space: "s2", status: "working" }]);
+  setReply((_c, args, o) => {
+    if (args[0] === "branch") return { code: 0, stdout: "  main\n+ merged-clean\n  merged-dirty\n", stderr: "" };
+    if (args.includes("status")) return { code: 0, stdout: o.cwd === "/repo/merged-dirty" ? " M a.ts\n" : "", stderr: "" };
+    return null;
+  });
+  Object.assign(worktree, { opening: false, cleaning: true, repo: { name: "repo", main: "/repo", top: "/repo", linked: false } });
+  worktree.list = [
+    { path: "/repo", branch: "main", main: true, at: 9 }, { path: "/repo/merged-clean", branch: "merged-clean", at: 5 },
+    { path: "/repo/merged-dirty", branch: "merged-dirty", at: 4 }, { path: "/repo/busy", branch: "busy", at: 3 }, { path: "/repo/open", branch: "open", at: 2 },
+  ];
+  const c = await worktree.inspect(worktree.repo);
+  expect(c.map((x: any) => [x.c.branch, x.merged, x.dirty, x.busy])).toEqual([
+    ["merged-clean", true, false, false], ["merged-dirty", true, true, false], ["busy", false, false, true], ["open", false, false, false],
+  ]);
+});
+
+test("cleanup removes only what is picked and safe, never forces, and needs a second click", async () => {
+  const { worktree, writes, executions, setProps } = harness();
+  setProps({ action: "cleanup" });
+  const mk = (branch: string, over: any = {}) => ({ c: { path: `/repo/${branch}`, branch }, dirty: false, busy: false, merged: true, space: null, ...over });
+  Object.assign(worktree, {
+    opening: false, cleaning: true, repo: { name: "repo", main: "/repo", top: "/repo", linked: false },
+    cands: [mk("a", { space: "s1" }), mk("b", { dirty: true }), mk("c", { busy: true }), mk("d")],
+    sel: new Set(["/repo/a", "/repo/b", "/repo/c"]),
+  });
+  worktree.go({ spawn() {}, notify() {} });
+  expect(worktree.armed).toBe(true); // the first click only arms it
+  expect(executions).toHaveLength(0);
+  expect(await worktree.cleanup()).toBe("");
+  const removed = executions.filter((e: any) => e.args[0] === "worktree").map((e: any) => e.args);
+  expect(removed).toEqual([["worktree", "remove", "/repo/a"]]); // b is dirty, c has an agent, d was not picked
+  expect(writes).toEqual([["space.close", { id: "s1", confirmed: true }]]);
+  worktree.toggle("/repo/d", { notify() {} });
+  expect(worktree.armed).toBe(false);
 });

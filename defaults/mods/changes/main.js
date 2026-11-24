@@ -1,6 +1,6 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Scrollbar, v_virtual_list } from "gpui-base";
-import { spaces, panes, focused, exec, readTextFile, watchFolder, notify, theme, settings, tr, style } from "herdr";
+import { spaces, panes, focused, exec, readTextFile, watchFolder, notify, theme, settings, shared, tr, style } from "herdr";
 
 // Radius scale: the theme's `style.radius` (6 = the original sizes).
 const R = (n) => Math.round(n * style().radius / 6);
@@ -36,6 +36,29 @@ function diffRows(lines) {
 
 // A patch to diff rows: file headers stay, git's own header lines go.
 const patchLines = (text) => text.replace(/\n$/, "").split("\n").filter((l) => !/^(index |--- |\+\+\+ |new file mode|deleted file mode|old mode|new mode|similarity |rename |Binary files)/.test(l));
+
+// A preference Settings wrote with setShared; unset (or unreadable) means the default.
+const pref = (key) => { try { return shared(key); } catch { return undefined; } };
+
+// Settings > Git: what the list compares the working tree with. "head": uncommitted changes (the
+// default); "default" or "upstream": the branch's whole work since it left the repo's default branch
+// or its upstream. Names the base and returns its merge-base with HEAD, or null when there is none.
+async function mergeBase(git, mode) {
+  let ref = null;
+  if (mode === "upstream") ref = (await git(["rev-parse", "--verify", "--quiet", "@{u}"])).code === 0 ? "@{u}" : null;
+  else {
+    const head = await git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]);
+    for (const name of [head.code === 0 ? head.stdout.trim() : null, "origin/main", "origin/master", "main", "master"]) {
+      if (name && (await git(["rev-parse", "--verify", "--quiet", name])).code === 0) { ref = name; break; }
+    }
+  }
+  if (!ref) return null;
+  const base = await git(["merge-base", "HEAD", ref]);
+  return base.code === 0 ? { ref: ref === "@{u}" ? "upstream" : ref, commit: base.stdout.trim() } : null;
+}
+
+// Settings > Git: the order of the change groups (status letters); null: one flat list.
+const GROUP_ORDER = { status: ["U", "M", "A", "D"], new_first: ["U", "A", "M", "D"] };
 
 export default class Changes extends View {
   init(_props, cx) {
@@ -80,6 +103,7 @@ export default class Changes extends View {
     }
     if (!cwd) return;
     this.loading = true;
+    this.baseMode = pref("changes.base") ?? "head";
     cx.spawn(async (cx) => {
       try {
         const top = await exec("git", ["rev-parse", "--show-toplevel"], { cwd, on });
@@ -94,7 +118,9 @@ export default class Changes extends View {
         const branch = await git(["branch", "--show-current"]);
         const counts = await git(["rev-list", "--left-right", "--count", "@{u}...HEAD"]);
         const stats = {};
-        const results = head.code === 0 ? [await git(["diff", "HEAD", "--numstat", "-z", "--no-renames"])] : [await git(["diff", "--cached", "--numstat", "-z", "--no-renames"]), await git(["diff", "--numstat", "-z", "--no-renames"])];
+        const base = head.code === 0 && (pref("changes.base") ?? "head") !== "head" ? await mergeBase(git, pref("changes.base")) : null;
+        const against = base?.commit ?? "HEAD";
+        const results = head.code === 0 ? [await git(["diff", against, "--numstat", "-z", "--no-renames"])] : [await git(["diff", "--cached", "--numstat", "-z", "--no-renames"]), await git(["diff", "--numstat", "-z", "--no-renames"])];
         for (const result of results) {
           if (result.code !== 0) throw new Error(result.stderr);
           for (const entry of result.stdout.split("\0")) {
@@ -106,7 +132,19 @@ export default class Changes extends View {
         }
         const files = [];
         const entries = status.stdout.split("\0").filter(Boolean);
-        for (const entry of entries.slice(0, 1000)) {
+        // Against a base, the files are those that differ from it (committed or not); untracked ones come from status.
+        if (base) {
+          const named = await git(["diff", "--name-status", "-z", "--no-renames", against]);
+          if (named.code !== 0) throw new Error(named.stderr);
+          const parts = named.stdout.split("\0").filter(Boolean);
+          for (let i = 0; i + 1 < parts.length; i += 2) {
+            const letter = parts[i][0], path = parts[i + 1], stat = stats[path] ?? { add: 0, del: 0 };
+            files.push({ path, status: letter === "D" ? "D" : letter === "A" ? "A" : letter === "U" ? "U" : "M", fresh: false, ...stat });
+          }
+          for (const entry of entries) if (entry.slice(0, 2) === "??" && !files.some((f) => f.path === entry.slice(3))) files.push({ path: entry.slice(3), status: "A", fresh: true, add: 0, del: 0 });
+          files.splice(1000);
+        }
+        for (const entry of base ? [] : entries.slice(0, 1000)) {
           const xy = entry.slice(0, 2), path = entry.slice(3), fresh = xy === "??";
           const conflict = xy.includes("U") || xy === "AA" || xy === "DD";
           const s = conflict ? "U" : xy.includes("D") ? "D" : fresh || xy.includes("A") ? "A" : "M";
@@ -118,7 +156,7 @@ export default class Changes extends View {
         this.upstream = counts.code === 0;
         const [behind, ahead] = this.upstream ? counts.stdout.trim().split(/\s+/).map(Number) : [0, 0];
         this.behind = behind || 0; this.ahead = ahead || 0;
-        this.root = root; this.on = on; this.hasHead = head.code === 0; this.files = files; this.limited = entries.length > 1000; this.error = null;
+        this.root = root; this.on = on; this.hasHead = head.code === 0; this.files = files; this.diffBase = against; this.baseRef = base?.ref ?? null; this.limited = entries.length > 1000; this.error = null;
         this.watch(root, cx);
         if (this.open && !files.some((f) => f.path === this.open)) { this.open = null; this.setLines([]); }
         // The first file's diff shows until you pick another.
@@ -145,7 +183,7 @@ export default class Changes extends View {
         lines = [`@@ -0,0 +1,${file.add} @@`, ...text.slice(0, 400000).replace(/\n$/, "").split("\n").slice(0, 1500).map(l => `+${l}`)];
       }
     } else {
-      const r = await exec("git", [...READ, "diff", ...(this.hasHead ? ["HEAD"] : []), "--no-ext-diff", "--no-textconv", "--no-color", "--", path], { cwd: root, on });
+      const r = await exec("git", [...READ, "diff", ...(this.hasHead ? [this.diffBase ?? "HEAD"] : []), "--no-ext-diff", "--no-textconv", "--no-color", "--", path], { cwd: root, on });
       if (r.code !== 0) throw new Error(r.stderr);
       const all = r.stdout.replace(/\n$/, "").split("\n"), first = all.findIndex((l) => l.startsWith("@@"));
       lines = first < 0 ? [file.binary ? tr("changes.binary_file_changed") : tr("changes.no_text_diff_available")] : all.slice(first);
@@ -255,6 +293,16 @@ export default class Changes extends View {
       .child(div().flex_1().min_w(0).truncate().child(text));
   }
 
+  // The files as the list draws them: grouped by status in the order Settings > Git picked, or flat.
+  groupRows() {
+    const order = GROUP_ORDER[pref("changes.groups")];
+    if (!order) return this.files;
+    return order.flatMap((k) => {
+      const group = this.files.filter((f) => f.status === k);
+      return group.length ? [{ head: k, n: group.length }, ...group] : [];
+    });
+  }
+
   gitBar(t) {
     const busy = Boolean(this.gitBusy), ready = Boolean(this.root);
     const btn = (id, label, action) => div().id(id).h(24).px(8).flex().items_center().rounded(R(6)).border_1().border_color(t.border).text_size(11)
@@ -290,11 +338,13 @@ export default class Changes extends View {
           .on_click((_e, cx) => this.openCommit(c.hash, cx))
           .child(h_flex().gap(8).child(div().text_size(11).text_color(t.dim).child(c.hash)).child(div().flex_1().min_w(0).truncate().child(c.subject)))
           .child(div().text_size(11).text_color(t.dim).child(`${c.author} · ${c.ago}`))))
-        .when(!this.commits.length, (e) => e.child(div().p(8).text_color(t.dim).child(this.root ? "…" : tr("changes.no_folder")))));
+        .when(!this.commits.length, (e) => e.child(div().p(8).text_color(t.dim).child(this.root ? "…" : tr("welcome.empty_changes")))));
   }
 
   render(cx) {
     if (key() !== this.context) this.refresh(cx);
+    // The compare base changed in Settings: read the repository again.
+    if ((pref("changes.base") ?? "head") !== (this.baseMode ?? "head") && this.root && !this.loading && !this.busy) this.refresh(cx);
     const t = theme(), add = this.files.reduce((n, f) => n + f.add, 0), del = this.files.reduce((n, f) => n + f.del, 0);
     const enabled = Boolean(this.message.trim() && this.root && !this.busy && !this.loading);
     return v_flex().id("changes").size_full().min_h(0).rounded(R(10)).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13).track_focus(this.handle)
@@ -304,19 +354,21 @@ export default class Changes extends View {
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
         .child(div().font_semibold().child(tr("changes.changes")))
         .child(div().px(5).py(1).rounded(R(4)).border_1().border_color(t.border).text_size(10).text_color(t.muted).child(tr("changes.n_files", { n: this.files.length })))
+        .when(Boolean(this.baseRef), (el) => el.child(div().id("changes-base").max_w(110).truncate().text_size(10).text_color(t.dim).child(tr("changes.vs_base", { ref: this.baseRef }))))
         .child(div().flex_1()).child(div().text_size(11).text_color(t.ansi2).child(`+${add}`)).child(div().text_size(11).text_color(t.ansi1).child(`−${del}`)))
       .child(this.gitBar(t))
       .when(this.branches !== null, (el) => el.child(this.branchList(t)))
       // overflow_y_scrollbar() wraps the list, so its flex sizing never reached the panel's layout.
       .when(this.view === "history", (el) => el.child(this.historyList(t)))
-      .when(this.view === "changes", (el) => el.child(div().flex_1().min_h(44).max_h(this.files.length * 28 + 12).relative().border_b(1).border_color(t.border)
-        .child(v_flex().id("changes-list").absolute().inset_0().overflow_y_scroll().p(6).children(this.files.map((f) => {
+      .when(this.view === "changes", (el) => el.child(div().flex_1().min_h(44).max_h(this.files.length * 28 + (this.groupRows().length - this.files.length) * 22 + 12).relative().border_b(1).border_color(t.border)
+        .child(v_flex().id("changes-list").absolute().inset_0().overflow_y_scroll().p(6).children(this.groupRows().map((f) => {
+        if (f.head) return div().id(`change-group-${f.head}`).h(22).flex_none().px(8).flex().items_center().text_size(10.5).font_semibold().text_color(t.dim).child(`${tr(`changes.group_${f.head}`)} · ${f.n}`);
         const parts = f.path.split("/"), name = parts.pop();
         return h_flex().id(`change-${f.path}`).h(28).flex_none().px(8).gap(8).items_center().rounded(R(7)).cursor_pointer().when(this.open === f.path, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.pick(f.path, cx))
           .child(div().w(14).text_size(11).text_color(f.status === "A" ? t.ansi2 : f.status === "D" ? t.ansi1 : f.status === "U" ? t.ansi1 : t.blocked).child(f.status))
           .child(h_flex().flex_1().min_w(0).child(div().text_color(t.dim).truncate().child(parts.length ? parts.join("/") + "/" : "")).child(div().max_w(260).min_w(0).truncate().child(name)))
           .when(f.add > 0, (e) => e.child(div().text_size(11).text_color(t.ansi2).child(`+${f.add}`))).when(f.del > 0, (e) => e.child(div().text_size(11).text_color(t.ansi1).child(`−${f.del}`)));
-      })).when(!this.files.length, (e) => e.child(div().p(8).text_color(t.dim).child(this.error || (this.loading ? tr("changes.loading_changes") : this.root ? tr("changes.no_uncommitted_changes") : tr("changes.no_folder"))))))
+      })).when(!this.files.length, (e) => e.child(div().p(8).text_color(t.dim).child(this.error || (this.loading ? tr("changes.loading_changes") : this.root ? tr("changes.no_uncommitted_changes") : tr("welcome.empty_changes"))))))
         .child(Scrollbar.vertical("changes-list").absolute().inset_0())))
       .when(this.limited, el => el.child(div().px(12).py(4).text_size(11).text_color(t.dim).child(tr("changes.showing_the_first_1_000_changed"))))
       .child(div().flex_1().min_h(0).relative().font_family(settings().font_family ?? "JetBrains Mono").text_size(11)

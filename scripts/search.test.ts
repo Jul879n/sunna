@@ -87,13 +87,12 @@ test("without ripgrep it falls back to git grep", async () => {
   expect(v.results.groups[0].hits[0]).toMatchObject({ path: "src/b.rs", line: 4 });
 });
 
-test("a click on a result asks Files to open it", async () => {
+test("a click on a result opens it in the editor on its line", async () => {
   engine = async (cmd) => cmd === "git" ? ok("/repo\n") : ok(match("src/a.rs", 3, "fn pane_frame()"));
   const v = view();
   v.search(cx);
   await cx.last;
   runs.length = 0;
   byId(v.render(cx), "search-hit-src/a.rs-3").calls.on_click[0]();
-  expect(shared["files.reveal"]).toMatchObject({ path: "/repo/src/a.rs", line: 3 });
-  expect(runs).toContainEqual(["layout.select", { stack: "panel-body", child: "files" }]);
+  expect(runs).toContainEqual(["file.open", { path: "/repo/src/a.rs", line: 3, on: "" }]);
 });

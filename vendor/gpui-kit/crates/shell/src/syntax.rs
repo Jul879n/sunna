@@ -225,6 +225,22 @@ fn brace_fold_ranges(text: &str) -> Vec<FoldRange> {
     ranges
 }
 
+/// HERDR: what the app needs to build a native code editor with the same
+/// highlighting mods' `EditorState` gets.
+pub fn editor_highlighter_factory() -> gpui_base::input::InputHighlighterFactory {
+    std::rc::Rc::new(|language| {
+        SyntectHighlighter::new(language).map(|highlighter| Box::new(highlighter) as Box<dyn gpui_base::input::InputHighlighter>)
+    })
+}
+
+/// HERDR: the editor style for semantic colors (`keyword`, `string`, ...); unset UI colors follow the theme.
+pub fn editor_style(colors: HashMap<String, gpui::Hsla>) -> gpui_base::input::InputEditorStyle {
+    gpui_base::input::InputEditorStyle {
+        highlight_styles: std::sync::Arc::new(SyntaxStyles(colors)),
+        ..Default::default()
+    }
+}
+
 /// HERDR: semantic overrides fall back to readable, dark-editor defaults.
 #[derive(Default)]
 pub(crate) struct SyntaxStyles(pub std::collections::HashMap<String, gpui::Hsla>);

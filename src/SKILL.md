@@ -47,6 +47,21 @@ sunna do pane.split --direction right --pane p12
 sunna do agent.focus --terminal t7
 ```
 
+To show a file to the person (or to edit one together), open it in the app's
+own editor instead of printing it: it gets its own tab, with highlighting, find
+and save.
+
+```sh
+sunna do file.open --path src/main.rs --line 40
+sunna do editor.save                  # the focused file; fails if the disk changed under it (add --force true to overwrite)
+```
+
+Closing a tab with unsaved edits needs `--confirmed true` (a person gets Save and
+close, Discard or Cancel; scripts can save first with `sunna do editor.save_close
+--then '{"name":"tab.close","args":{"id":"..."}}'`); a file on another machine
+opens read only. Cmd/Ctrl+P is Go to file (`file.goto`, native: fuzzy by name over the project's files, recent first);
+the tab and agent selector moved to Cmd/Ctrl+Alt+P.
+
 For a remote space:
 
 ```sh

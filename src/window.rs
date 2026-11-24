@@ -5,11 +5,16 @@
 //! anything: keys, mods, menus and agents all run them.
 
 use crate::hc::Core;
+mod confirm;
+mod editor;
 mod floats;
+mod goto_file;
 mod movable;
 mod layout_edit;
 mod pane_drag;
 mod pane_size;
+#[path = "window/settings/mod.rs"]
+mod settings_ui;
 mod titlebar;
 
 use crate::layout::{Axis, Background as Paint, Content, Fit, HeaderContent, Kind, Line, Node, PaneFrame, Size as Span};
@@ -351,6 +356,8 @@ struct Overlay {
     /// The app's own screen (a `frame-` mod: What's new, the welcome): only
     /// its own close ends it, never a layout switch.
     frame: bool,
+    /// A native view instead of a mod (the Settings window, settings_ui).
+    view: Option<AnyView>,
 }
 
 struct Drag {
@@ -491,6 +498,14 @@ pub struct AppWindow {
     /// Remembers where the window is (`place.rs`); the write waiting to settle.
     _place: Option<Subscription>,
     place_write: Option<Task<()>>,
+    /// Files open as editor panes by pane id (`window/editor.rs`).
+    editors: HashMap<String, editor::EditorPane>,
+    /// A "save and close" waiting for its files to be written.
+    save_close: Option<crate::editor::SaveThen>,
+    /// Lines to show once an editor pane has read its file.
+    editor_goto: HashMap<String, usize>,
+    /// Checks open files against the disk now and then.
+    editor_poll: Option<Task<()>>,
 }
 
 impl AppWindow {
@@ -595,6 +610,10 @@ impl AppWindow {
             _focus_lost: None,
             _place: None,
             place_write: None,
+            editors: HashMap::new(),
+            save_close: None,
+            editor_goto: HashMap::new(),
+            editor_poll: None,
         };
         w._focus_lost = Some(cx.on_focus_lost(window, |this, window, cx| this.restore_focus(window, cx)));
         w._place = Some(cx.observe_window_bounds(window, |this, window, cx| {
@@ -608,6 +627,11 @@ impl AppWindow {
             // the Dock icon or a new launch brings it back, Cmd+Q quits.
             if cfg!(target_os = "macos") {
                 cx.hide();
+                return false;
+            }
+            // Files edited and not saved: the window stays and asks.
+            if unsaved_files() > 0 {
+                mods::request(mods::Request::Run { name: "window.close".into(), args: json!({}) });
                 return false;
             }
             let _ = closing.update(cx, |this, cx| {
@@ -1248,7 +1272,7 @@ impl AppWindow {
         let mut mods = Vec::new();
         let visit = |n: &Node, terms: &mut Vec<(String, String)>, mods: &mut Vec<(String, Instance)>| match n.content() {
             Some(Content::Terminal { terminal }) => terms.push((n.id.clone(), terminal.clone())),
-            Some(Content::Mod { name, props }) => mods.push((n.id.clone(), Instance { name: name.clone(), props: props.clone() })),
+            Some(Content::Mod { name, props }) if name != editor::NAME => mods.push((n.id.clone(), Instance { name: name.clone(), props: props.clone() })),
             _ => {}
         };
         let stacks = |root: &Node, mods: &mut Vec<(String, Instance)>| {
@@ -1299,6 +1323,9 @@ impl AppWindow {
                 }
             }
         }
+        if let Some((slot, inst)) = self.welcome_mod() {
+            mods.push((slot, inst));
+        }
         for o in &self.overlays {
             if let Some(c) = self.copies.get(&o.slot) {
                 mods.push((o.slot.clone(), c.inst.clone()));
@@ -1312,6 +1339,12 @@ impl AppWindow {
         (terms, mods)
     }
 
+    /// The `welcome` mod fills the main area while no space is open.
+    fn welcome_mod(&self) -> Option<(String, Instance)> {
+        let loading = self.documents.get("").is_some_and(|s| s.layout() == "loading");
+        wants_welcome(self.shows_tab(), self.model.active_tab().is_some(), loading).then(|| (WELCOME.to_owned(), Instance { name: WELCOME.to_owned(), props: json!({}) }))
+    }
+
     /// Mod slots whose copy may stay alive: every one in the layout (hidden
     /// nodes, inactive stack children, hidden floats), every pane mod of every
     /// tab (zoomed or not shown), and the overlays.
@@ -1319,7 +1352,9 @@ impl AppWindow {
         let mut out = HashMap::new();
         let inst = |name: &String, props: &Value| Instance { name: name.clone(), props: props.clone() };
         for n in self.chrome.walk() {
-            if let Some(Content::Mod { name, props }) = n.content() {
+            if let Some(Content::Mod { name, props }) = n.content()
+                && name != editor::NAME
+            {
                 out.insert(n.id.clone(), inst(name, props));
             }
             if let Kind::Stack { header: Some(h), .. } = &n.kind
@@ -1349,7 +1384,9 @@ impl AppWindow {
             });
         for c in self.model.tabs() {
             for n in c.root.walk() {
-                if let Some(Content::Mod { name, props }) = n.content() {
+                if let Some(Content::Mod { name, props }) = n.content()
+                    && name != editor::NAME
+                {
                     out.insert(n.id.clone(), inst(name, props));
                 }
                 if let Some((name, props)) = &header
@@ -1359,6 +1396,9 @@ impl AppWindow {
                     out.insert(slot, i);
                 }
             }
+        }
+        if let Some((slot, inst)) = self.welcome_mod() {
+            out.insert(slot, inst);
         }
         for o in &self.overlays {
             if let Some(c) = self.copies.get(&o.slot) {
@@ -1564,6 +1604,7 @@ impl AppWindow {
                 self.copies.insert(slot, copy);
             }
         }
+        self.sync_editors(window, cx);
         self.publish_shown_copies();
 
         // Keyboard to the focused pane when it changes (never steal it from an open dialog).
@@ -1581,7 +1622,7 @@ impl AppWindow {
         }
         // Mod blocks too, so `pane.go` goes back to a mod it came from.
         self.pane_history.retain(|id| {
-            self.copies.contains_key(id) || self.model.spaces.iter().any(|s| s.tabs.iter().any(|t| t.root.find(id).is_some()))
+            self.copies.contains_key(id) || self.editors.contains_key(id) || self.model.spaces.iter().any(|s| s.tabs.iter().any(|t| t.root.find(id).is_some()))
         });
         if let Some(id) = self.focused_block.as_ref().or(model_pane.as_ref()) {
             remember_pane(&mut self.pane_history, id);
@@ -1769,7 +1810,7 @@ impl AppWindow {
     }
 
     fn pane_focus(&self, pane: &str, cx: &App) -> Option<FocusHandle> {
-        self.pane_term(pane).map(|t| t.view.read(cx).focus_target(cx))
+        self.pane_term(pane).map(|t| t.view.read(cx).focus_target(cx)).or_else(|| self.editor_focus(pane, cx))
     }
 
     fn load(&self, inst: Instance, window: &mut Window, cx: &mut Context<Self>) -> Copy {
@@ -1836,7 +1877,7 @@ impl AppWindow {
     fn publish(&mut self, cx: &mut Context<Self>) {
         let m = &self.model;
         let home = home();
-        let spaces: Vec<Value> = m
+        let mut spaces: Vec<Value> = m
             .spaces
             .iter()
             .enumerate()
@@ -1847,6 +1888,13 @@ impl AppWindow {
                 model::space_json(m, p, i, branch.as_deref(), &home)
             })
             .collect();
+        // Tabs with a file edited and not saved.
+        let unsaved = self.dirty_panes();
+        for (space, json) in m.spaces.iter().zip(spaces.iter_mut()) {
+            for (tab, entry) in space.tabs.iter().zip(json["tabs"].as_array_mut().into_iter().flatten()) {
+                entry["dirty"] = json!(tab.root.panes().iter().any(|n| unsaved.contains(&n.id)));
+            }
+        }
         // A window's terminal with the keyboard first, then a layout terminal block.
         let block = overlay_terminal_block(&self.overlays, self.window_terminal.as_deref())
             .or_else(|| terminal_block(&self.chrome, self.focused_pane.as_deref()));
@@ -1859,8 +1907,11 @@ impl AppWindow {
                     let focused = m.active.as_deref() == Some(pr.id.as_str()) && focused_pane.as_deref() == Some(p.id.as_str());
                     let zoomed = ctx.zoomed.as_deref() == Some(p.id.as_str());
                     // A mod pane: what it shows, no terminal.
-                    if let Some(Content::Mod { name, .. }) = p.content() {
-                        panes.push(json!({ "pane": p.id, "terminal": null, "mod": name, "tab": ctx.id, "title": name, "focused": focused, "zoomed": zoomed, "movable": self.pane_movable(&p.id) }));
+                    if let Some(Content::Mod { name, props }) = p.content() {
+                        // A file editor is titled by its file.
+                        let title = self.editors.get(&p.id).map_or(name.as_str(), |e| crate::editor::file_name(e.path()));
+                        let file = if name == editor::NAME { props.get("file").cloned() } else { None };
+                        panes.push(json!({ "pane": p.id, "terminal": null, "mod": name, "tab": ctx.id, "title": title, "file": file, "dirty": unsaved.contains(&p.id), "focused": focused, "zoomed": zoomed, "movable": self.pane_movable(&p.id) }));
                         continue;
                     }
                     let Some(addr) = p.terminal() else { continue };
@@ -2319,8 +2370,11 @@ impl AppWindow {
     /// toast (drawn by the `toast` mod; click it to go there) unless they're
     /// looking at that agent.
     fn alert(&mut self, addr: &str, alert: model::Alert, looking: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if settings::get().sounds.enabled {
-            crate::sound::play(if alert == model::Alert::Blocked { "blocked" } else { "done" });
+        let notifications = settings::get().notifications.clone();
+        let blocked = alert == model::Alert::Blocked;
+        let wanted = notifications.wants(blocked);
+        if wanted && settings::get().sounds.enabled {
+            crate::sound::play(if blocked { "blocked" } else { "done" });
         }
         // Needing the person brings a settled tab back.
         if let Some(ctx) = self.model.pane_of(&self.root_agent(addr)).and_then(|p| self.model.tab_of(&p)).map(|c| c.id.clone())
@@ -2329,7 +2383,7 @@ impl AppWindow {
             self.save();
             self.publish(cx);
         }
-        if looking {
+        if looking || !wanted || !notifications.enabled {
             return;
         }
         let rec = self.live.get(addr);
@@ -2705,7 +2759,7 @@ impl AppWindow {
         if self.model.space(&space).is_none() {
             return Err(format!("no space {space:?}"));
         }
-        if !self.folders.contains_key(&m) {
+        if m != editor::NAME && !self.folders.contains_key(&m) {
             return Err(format!("no mod {m:?} in mods/"));
         }
         let machine = self.machine_of(&space);
@@ -2740,7 +2794,7 @@ impl AppWindow {
         if self.model.tab_of(&target).is_none() {
             return Err(format!("no pane {target:?}"));
         }
-        if !self.folders.contains_key(&name) {
+        if name != editor::NAME && !self.folders.contains_key(&name) {
             return Err(format!("no mod {name:?} in mods/"));
         }
         let machine = self.model.space_of(&target).and_then(|s| s.machine.clone());
@@ -3129,6 +3183,7 @@ impl AppWindow {
     fn dispatch(&mut self, name: &str, a: &Value, person: bool, window: &mut Window, cx: &mut Context<Self>) {
         let active_ctx = self.model.active_tab().map(|c| c.id.clone());
         match name {
+            "file.open" | "editor.save" | "editor.save_close" | "editor.preview" | "editor.reload" | "editor.goto" => self.editor_command(name, a, person, window, cx),
             // ---- spaces
             "space.new" => {
                 let Some(focus) = Self::focus(a) else { return self.fail("space.new focus is true or false") };
@@ -3139,6 +3194,11 @@ impl AppWindow {
             "space.close" => {
                 let Some(id) = Self::owned(a, "id").or_else(|| self.model.active.clone()) else { return self.fail("no space to close") };
                 let Some(p) = self.model.space(&id) else { return self.fail(format!("no space {id:?}")) };
+                let panes: Vec<String> = p.tabs.iter().flat_map(|t| t.root.panes().into_iter().map(|n| n.id.clone())).collect();
+                if self.ask_unsaved("space.close", json!({ "id": id }), Some(&panes), a, person, window, cx) {
+                    return;
+                }
+                let Some(p) = self.model.space(&id) else { return };
                 if a.get("confirmed").and_then(Value::as_bool) != Some(true) {
                     if !person {
                         return self.fail("space.close ends its terminals: pass confirmed: true");
@@ -3195,6 +3255,11 @@ impl AppWindow {
             "tab.close" => {
                 let Some(id) = Self::owned(a, "id").or(active_ctx) else { return self.fail("no tab to close") };
                 let Some(p) = self.model.space_of(&id) else { return self.fail(format!("no tab {id:?}")) };
+                let panes: Vec<String> = p.tabs.iter().find(|t| t.id == id).map(|t| t.root.panes().iter().map(|n| n.id.clone()).collect()).unwrap_or_default();
+                if self.ask_unsaved("tab.close", json!({ "id": id }), Some(&panes), a, person, window, cx) {
+                    return;
+                }
+                let Some(p) = self.model.space_of(&id) else { return };
                 // The last tab takes its space with it: ask like closing the space.
                 if p.tabs.len() == 1 {
                     let mut args = json!({ "id": p.id });
@@ -3266,9 +3331,13 @@ impl AppWindow {
                 if c.root.find(&pane).is_some_and(|n| !n.closable()) {
                     return;
                 }
-                if c.root.panes().len() == 1 {
-                    let id = c.id.clone();
-                    return self.dispatch("tab.close", &json!({ "id": id }), person, window, cx);
+                let last = (c.root.panes().len() == 1).then(|| c.id.clone());
+                if self.ask_unsaved("pane.close", json!({ "pane": pane }), Some(&[pane.clone()]), a, person, window, cx) {
+                    return;
+                }
+                if let Some(id) = last {
+                    let confirmed = a.get("confirmed").cloned().unwrap_or(Value::Null);
+                    return self.dispatch("tab.close", &json!({ "id": id, "confirmed": confirmed }), person, window, cx);
                 }
                 let addr = self.model.address_of(&pane);
                 self.model.remove_pane(&pane);
@@ -3622,8 +3691,17 @@ impl AppWindow {
                     return self.fail(format!("no stack {s:?} with a child {ch:?}"));
                 }
             }
+            "file.goto" => {
+                self.toggle_goto_file(window, cx);
+                return;
+            }
             "mod.open" => {
                 let name = Self::arg(a, "name").unwrap_or_default();
+                // Go to file is native now; a key or palette entry that still says `mod.open:goto-file` works.
+                if name == "goto-file" && !self.folders.contains_key(name) {
+                    self.toggle_goto_file(window, cx);
+                    return;
+                }
                 let Some(f) = self.folders.get(name) else { return self.fail(format!("no mod folder {name:?}")) };
                 let mut spec = mod_overlay(&f.dir);
                 spec["mod"] = json!(name);
@@ -3675,13 +3753,14 @@ impl AppWindow {
             "app.settings" => {
                 // Once: a second press doesn't stack another; asking for a section opens it there.
                 let section = Self::owned(a, "section");
-                let open = self.overlays.iter().any(|o| o.id == "settings");
+                let open = self.overlays.iter().any(|o| o.id == settings_ui::NATIVE_ID);
                 if open && section.is_some() {
-                    self.close_overlay("settings", window, cx);
+                    self.close_overlay(settings_ui::NATIVE_ID, window, cx);
                 }
                 if !open || section.is_some() {
-                    let spec = json!({ "mod": "frame-settings", "kind": "dialog", "width": 880, "props": { "section": section } });
-                    self.open_overlay("settings".into(), spec, window, cx);
+                    // An unknown section falls on the first one.
+                    let s = section.as_deref().filter(|s| settings_ui::is_native(s)).unwrap_or(settings_ui::NATIVE_SECTIONS[0]);
+                    self.open_native_settings(s, window, cx);
                 }
                 return;
             }
@@ -3744,7 +3823,12 @@ impl AppWindow {
                 };
                 self.write_person(|p| p.keep_awake = mode, window, cx);
             }
-            "app.quit" => cx.quit(),
+            "app.quit" => {
+                if self.ask_unsaved("app.quit", json!({}), None, a, person, window, cx) {
+                    return;
+                }
+                cx.quit()
+            }
             "app.update" => {
                 match crate::update::apply() {
                     Ok(true) => {}
@@ -3758,7 +3842,12 @@ impl AppWindow {
                 crate::update::relaunch();
                 cx.quit();
             }
-            "window.close" | "window.minimize" | "window.maximize" => return self.window_command(name, window, cx),
+            "window.close" | "window.minimize" | "window.maximize" => {
+                if name == "window.close" && self.ask_unsaved("window.close", json!({}), None, a, person, window, cx) {
+                    return;
+                }
+                return self.window_command(name, window, cx);
+            }
             // Hiding apps is macOS's (bound natively there).
             "app.hide" | "app.hide_others" | "app.show_all" => return,
             other => {
@@ -3847,9 +3936,7 @@ impl AppWindow {
     // ---- overlays ----------------------------------------------------------
 
     fn confirm(&mut self, title: &str, detail: &str, command: &str, args: Value, window: &mut Window, cx: &mut Context<Self>) {
-        let spec = json!({ "mod": "confirm", "kind": "dialog", "width": 380,
-            "props": { "title": title, "detail": detail, "command": { "name": command, "args": args } } });
-        self.open_overlay(mods::new_overlay_id(), spec, window, cx);
+        self.open_confirm(confirm::Ask::new(title, detail, command, args), window, cx);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3881,6 +3968,19 @@ impl AppWindow {
     }
 
     fn open_overlay(&mut self, id: String, spec: Value, window: &mut Window, cx: &mut Context<Self>) {
+        // The `confirm` and `goto-file` mods became native: a mod that still opens them by
+        // name gets the native ones, unless the person keeps a mod folder of that name.
+        match spec.get("mod").and_then(Value::as_str) {
+            Some("confirm") if !self.folders.contains_key("confirm") => {
+                let width = spec.get("width").and_then(Value::as_f64).map(|w| w as f32);
+                match confirm::Ask::from_props(spec.get("props").unwrap_or(&Value::Null), width) {
+                    Some(ask) => return self.open_confirm(ask, window, cx),
+                    None => return tracing::warn!("openOverlay confirm needs props.command.name"),
+                }
+            }
+            Some("goto-file") if !self.folders.contains_key("goto-file") => return self.toggle_goto_file(window, cx),
+            _ => {}
+        }
         let kind = match spec.get("kind").and_then(Value::as_str) {
             Some("popup") => OverlayKind::Popup,
             Some("toast") => OverlayKind::Toast,
@@ -3967,6 +4067,7 @@ impl AppWindow {
             place,
             key: key.clone(),
             frame: spec.get("mod").and_then(Value::as_str).is_some_and(|m| m.starts_with("frame-")),
+            view: None,
         });
         if let Some(k) = &key {
             if spec.get("keep").and_then(Value::as_bool) == Some(true) {
@@ -4079,7 +4180,10 @@ impl AppWindow {
             Request::CloseOverlay { id } => self.close_overlay(&id, window, cx),
             Request::SetWindowTitle(title) => window.set_window_title(title.as_deref().unwrap_or("Sunna")),
             Request::SetBadge(text) => crate::badge::set(text.as_deref()),
-            Request::Refresh => self.refresh_mods(cx),
+            Request::Refresh => {
+                self.refresh_mods(cx);
+                cx.notify();
+            }
             Request::Control { cmd, reply } => {
                 let _ = reply.send(self.control(cmd, window, cx));
             }
@@ -4569,6 +4673,7 @@ impl AppWindow {
                 }
                 None => div().into_any_element(),
             },
+            Content::Mod { name, .. } if name == editor::NAME => self.render_editor(&n.id, cx),
             Content::Mod { .. } => self.render_slot(&n.id, cx),
             Content::Agent { .. } => match self.shown_agent() {
                 Some(addr) => match self.agent_view(&n.id, &addr) {
@@ -4590,17 +4695,7 @@ impl AppWindow {
                     self.render_node(c.shown(), focused, frame.as_ref(), cx)
                 }
                 None if self.documents.get("").is_some_and(|s| s.layout() == "loading") => div().size_full().into_any_element(),
-                None => {
-                    let key = crate::keys::listing().into_iter().find(|(_, _, a)| a == "space.new").map(|(_, k, _)| format!(" ({k})"));
-                    div()
-                        .size_full()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .text_color(c("dim"))
-                        .child(format!("No space open. Make one{}.", key.unwrap_or_default()))
-                        .into_any_element()
-                }
+                None => self.render_slot(WELCOME, cx),
             },
         }
     }
@@ -4785,9 +4880,10 @@ impl AppWindow {
             let span = |v: f32, full: Pixels| if v <= 1.0 { full * v } else { settings::z(v) };
             let (w, h) = (span(o.size.width, viewport.width), span(o.size.height, viewport.height));
             let sized = |v: f32| v > 0.0 || o.kind != OverlayKind::Window;
-            let content = match &o.layout {
-                Some(l) => self.render_node(l, &HashSet::new(), None, cx),
-                None => self.render_slot(&o.slot, cx),
+            let content = match (&o.layout, &o.view) {
+                (Some(l), _) => self.render_node(l, &HashSet::new(), None, cx),
+                (None, Some(view)) => view.clone().into_any_element(),
+                (None, None) => self.render_slot(&o.slot, cx),
             };
             let body = div()
                 .id(SharedString::from(format!("ov-{}", o.id)))
@@ -5229,6 +5325,14 @@ fn pane_header_mod(n: &Node, name: &str, props: &Value) -> (String, Instance) {
     (format!("{}#frame", n.id), Instance { name: name.to_owned(), props })
 }
 
+/// Slot and mod name of the empty-state screen (`defaults/mods/welcome`).
+const WELCOME: &str = "welcome";
+
+/// Whether the main area shows the welcome mod: a tab-showing block, no space, not still loading.
+fn wants_welcome(shows_tab: bool, has_tab: bool, loading: bool) -> bool {
+    shows_tab && !has_tab && !loading
+}
+
 /// Every node shown on screen (hidden ones and inactive stack children skipped).
 fn visible_nodes(n: &Node) -> Vec<&Node> {
     if n.hidden {
@@ -5368,6 +5472,16 @@ fn shadow(el: Div, s: Option<&str>) -> Div {
     }
 }
 
+/// How many files are edited and not saved.
+pub fn unsaved_files() -> usize {
+    editor::UNSAVED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// No terminal view has the keyboard.
+fn clicked_terminal_none(terms: &HashMap<String, Term>, window: &Window) -> bool {
+    !terms.values().any(|t| t.focus.is_focused(window))
+}
+
 impl Render for AppWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         crate::bench::count(&crate::bench::WINDOW);
@@ -5399,6 +5513,18 @@ impl Render for AppWindow {
             self.synced_model_pane = self.model.focused_pane();
             self.publish(cx);
         }
+        // The same for a file editor whose text has the keyboard.
+        if clicked_terminal_none(&self.terms, window)
+            && let Some(id) = self.focused_editor(window, cx)
+            && self.focused_pane.as_deref() != Some(id.as_str())
+            && self.model.tab_of(&id).is_some()
+        {
+            self.model.focus_pane(&id);
+            self.focused_pane = Some(id);
+            self.synced_model_pane = self.model.focused_pane();
+            self.publish(cx);
+        }
+        self.apply_editor_look(window, cx);
         self.publish_focused_selection(window, cx);
         self.tick_floats(window);
         self.apply_titlebar(window);
@@ -5424,6 +5550,8 @@ impl Render for AppWindow {
             .bg(c("background"))
             .text_color(c("foreground"))
             .font_family(settings::get().ui_font_family.clone())
+            // A file dropped where no terminal takes it opens in an editor tab.
+            .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| this.open_dropped(paths.paths(), window, cx)))
             .on_action(cx.listener(|this, a: &ShellAction, w, cx| {
                 #[cfg(any(target_os = "macos", test))]
                 if matches!(a.id(), "terminal.copy" | "terminal.paste")
@@ -5562,6 +5690,15 @@ fn reconcile_core_update_error(dismissed: &mut Option<String>, core: &crate::upd
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn welcome_only_with_no_space_open() {
+        use super::wants_welcome;
+        assert!(wants_welcome(true, false, false));
+        assert!(!wants_welcome(true, true, false));
+        assert!(!wants_welcome(true, false, true));
+        assert!(!wants_welcome(false, false, false));
+    }
+
     #[test]
     fn resume_action_labels_resumes_and_clears() {
         use super::{ResumeAction::*, resume_action};
@@ -6069,7 +6206,16 @@ mod tests {
     #[gpui::test]
     fn traffic_light_dividers_start_below_the_toolbar(cx: &mut TestAppContext) {
         use std::{cell::Cell, rc::Rc};
-        let mut layout: crate::layout::Node = serde_json::from_str(include_str!("../defaults/layouts/main.json")).unwrap();
+        let mut layout: crate::layout::Node = serde_json::from_value(serde_json::json!({
+            "id": "root", "type": "row", "traffic_lights": [12, 16], "divider": {"width": 1, "color": "border"},
+            "children": [
+                {"id": "sidebar", "type": "column", "size": {"px": 268}, "children": [
+                    {"id": "brand", "type": "block", "size": {"px": 46}, "window_drag": true, "content": {"mod": "workspace-chrome"}},
+                    {"id": "spaces", "type": "block", "content": {"mod": "spaces"}}]},
+                {"id": "work", "type": "column", "children": [
+                    {"id": "tabs", "type": "block", "size": {"px": 42}, "window_drag": true, "content": {"mod": "tabs"}},
+                    {"id": "main", "type": "block", "content": {"tab": "active"}}]}]
+        })).unwrap();
         let context = cx.add_empty_window();
         for (macos, titlebar, width, zoom, expected) in [
             (true, crate::layout::Titlebar::Layout, 44.0, 1.0, 42.0),
@@ -6852,6 +6998,103 @@ mod tests {
         let shown_now = new_tab(json!({ "space": "s2", "mod": "board" }), cx);
         let tab = shown_now["tab"].as_str().unwrap().to_owned();
         assert_eq!(shown(cx), ("s2".into(), tab));
+    }
+
+    #[test]
+    fn file_editor_opens_edits_saves_and_asks_before_closing() {
+        in_own_process("file_editor_flow");
+    }
+
+    /// A file opens in its own tab, edits mark it unsaved, saving writes the
+    /// disk, a change made outside is never overwritten without force, and
+    /// closing with unsaved changes asks.
+    #[gpui::test]
+    fn file_editor_flow(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+        if !running_alone("file_editor_flow") {
+            return;
+        }
+        let dir = crate::test_tmp().join(format!("sunna-editor-window-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("notes.rs");
+        std::fs::write(&file, "hello\nworld\n").unwrap();
+        let (view, cx) = open_window(cx, "board", "", json!({ "id": "main", "type": "block", "content": { "tab": "active" } }));
+        cx.update(|window, cx| view.update(cx, |this, cx| {
+            this.documents.entry(String::new()).or_default().available = true;
+            this.model.add_space("s1", "one", dir.to_str().unwrap(), crate::model::Tab::new("a", "a", "pa", "t1"));
+            this.sync(window, cx);
+        }));
+        let run = |name: &str, args: serde_json::Value, person: bool, cx: &mut gpui::VisualTestContext| {
+            let name = name.to_owned();
+            let out = cx.update(|window, cx| view.update(cx, |this, cx| this.run_as(&name, args, person, window, cx)));
+            cx.update(|window, cx| view.update(cx, |this, cx| this.sync(window, cx)));
+            cx.executor().run_until_parked();
+            out
+        };
+        let probe = |pane: &str, cx: &mut gpui::VisualTestContext| cx.update(|_, cx| view.read_with(cx, |this, cx| this.editor_probe(pane, cx)));
+
+        let opened = run("file.open", json!({ "path": "notes.rs", "line": 2 }), false, cx);
+        let pane = opened["pane"].as_str().unwrap_or_else(|| panic!("{opened}")).to_owned();
+        let tab = opened["tab"].as_str().unwrap().to_owned();
+        let p = probe(&pane, cx).unwrap();
+        assert!(p.loaded && !p.dirty && p.text.as_deref() == Some("hello\nworld\n"), "loaded: {:?}", p.failed);
+        // Opening it again shows the same tab.
+        let again = run("file.open", json!({ "path": file.to_str().unwrap() }), false, cx);
+        assert_eq!((again["pane"].as_str(), again["opened"].as_bool()), (Some(pane.as_str()), Some(false)), "{again}");
+        assert_eq!(cx.update(|_, cx| view.read_with(cx, |this, _| this.model.space("s1").unwrap().tabs.len())), 2);
+
+        // Typing marks it unsaved; the tab says so and closing asks.
+        cx.update(|window, cx| view.update(cx, |this, cx| this.editor_type(&pane, "X", window, cx)));
+        assert!(probe(&pane, cx).unwrap().dirty);
+        assert_eq!(cx.update(|_, cx| view.read_with(cx, |this, _| this.unsaved_files(None))), vec!["notes.rs".to_owned()]);
+        let refused = run("tab.close", json!({ "id": tab }), false, cx);
+        assert!(refused["error"].as_str().is_some_and(|e| e.contains("notes.rs") && e.contains("confirmed")), "{refused}");
+        assert!(cx.update(|_, cx| view.read_with(cx, |this, _| this.model.tab(&tab).is_some())));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "hello\nworld\n");
+
+        // Saving writes the disk and clears the mark.
+        let saved = run("editor.save", json!({ "pane": pane }), false, cx);
+        assert_eq!(saved["pane"].as_str(), Some(pane.as_str()), "{saved}");
+        let on_disk = std::fs::read_to_string(&file).unwrap();
+        assert!(on_disk.contains("X") && on_disk.contains("world"), "{on_disk}");
+        assert!(!probe(&pane, cx).unwrap().dirty);
+
+        // Someone else writes the file: our save is refused, theirs stays.
+        cx.update(|window, cx| view.update(cx, |this, cx| this.editor_type(&pane, "Y", window, cx)));
+        std::fs::write(&file, "theirs\n").unwrap();
+        run("editor.save", json!({ "pane": pane }), false, cx);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "theirs\n");
+        let p = probe(&pane, cx).unwrap();
+        assert!(p.dirty && p.note == "conflict");
+        // Forcing writes ours.
+        run("editor.save", json!({ "pane": pane, "force": true }), false, cx);
+        assert!(std::fs::read_to_string(&file).unwrap().contains("Y"));
+        let p = probe(&pane, cx).unwrap();
+        assert!(!p.dirty && p.note.is_empty());
+
+        // An unsaved edit then closing with confirmed leaves the file as it was.
+        cx.update(|window, cx| view.update(cx, |this, cx| this.editor_type(&pane, "Z", window, cx)));
+        let before = std::fs::read_to_string(&file).unwrap();
+        let closed = run("tab.close", json!({ "id": tab, "confirmed": true }), false, cx);
+        assert!(closed.get("error").is_none(), "{closed}");
+        assert!(cx.update(|_, cx| view.read_with(cx, |this, _| this.model.tab(&tab).is_none() && this.editor_probe(&pane, cx).is_none())));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), before);
+        assert_eq!(super::unsaved_files(), 0);
+
+        // Binary and huge files say why they aren't opened.
+        std::fs::write(dir.join("a.bin"), [1u8, 0, 2]).unwrap();
+        std::fs::write(dir.join("big.txt"), vec![b'x'; crate::mod_files::LIMIT as usize + 5]).unwrap();
+        for (name, word) in [("a.bin", "binary"), ("big.txt", "1 MiB")] {
+            let made = run("file.open", json!({ "path": name }), false, cx);
+            let pane = made["pane"].as_str().unwrap_or_else(|| panic!("{made}")).to_owned();
+            let p = probe(&pane, cx).unwrap();
+            assert!(!p.loaded && p.failed.as_deref().is_some_and(|m| m.contains(word)), "{name}: {:?}", p.failed);
+            assert!(run("editor.save", json!({ "pane": pane }), false, cx).get("error").is_some());
+        }
+        let missing = run("file.open", json!({ "path": "nope.txt" }), false, cx);
+        let pane = missing["pane"].as_str().unwrap().to_owned();
+        assert!(probe(&pane, cx).unwrap().failed.is_some_and(|m| m.contains("nope.txt")));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

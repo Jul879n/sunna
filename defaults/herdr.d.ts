@@ -118,6 +118,8 @@ export interface TabInfo {
   changed_at: number | null;
   /** Since when an agent in it has been working, or null. */
   working_since: number | null;
+  /** A file open in an editor pane of this tab has changes that aren't saved. */
+  dirty: boolean;
 }
 
 export interface SpaceInfo {
@@ -207,12 +209,16 @@ export interface PaneScroll {
 export interface PaneInfo {
   pane: string;
   /** null for a mod pane (`pane.split {mod}`): then `mod` names it, and only
-   *  pane, mod, tab, title, focused and zoomed are set. */
+   *  pane, mod, tab, title, focused, zoomed, movable (and for the `editor` pane,
+   *  file and dirty) are set. */
   terminal: string | null;
   mod?: string;
   tab: string;
-  /** The terminal's title (what the program set), or the mod's name. */
+  /** The terminal's title (what the program set), or the mod's name (a file editor: the file's name). */
   title: string;
+  /** A file editor pane (`mod` is "editor"): the file's path, and whether it has changes that aren't saved. */
+  file?: string | null;
+  dirty?: boolean;
   /** Its live folder, and the git branch there. */
   cwd: string | null;
   branch: string | null;

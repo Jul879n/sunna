@@ -23,6 +23,7 @@ const GROUPS = ["palette.recent", "palette.tab", "palette.pane", "palette.space"
 const NAMED = [
   ["tab.new", {}, "palette.tab", "palette.new_tab", "tab agent new task pestaña agente nueva tarea"],
   ["mod.open", { name: "picker" }, "palette.tab", "palette.go_to_space_or_tab", "switch jump find cambiar saltar buscar"],
+  ["file.goto", {}, "palette.tab", "palette.go_to_file", "file open find archivo abrir buscar"],
   ["mod.open", { name: "folders" }, "palette.tab", "folders.open", "folder directory open carpeta directorio abrir"],
   ["tab.rename", {}, "palette.tab", "palette.rename_tab", "tab renombrar"],
   ["tab.close", {}, "palette.tab", "palette.close_tab", "tab kill cerrar"],

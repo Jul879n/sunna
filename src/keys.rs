@@ -41,6 +41,10 @@ const SHIPPED_KEYS: &[&str] = &[
     include_str!("keys/shipped/v0.1.12-keys.json"),
     include_str!("keys/shipped/v0.1.15-keys.json"),
     include_str!("keys/shipped/v0.1.15c-keys.json"),
+    include_str!("keys/shipped/v0.1.16-keys.json"),
+    include_str!("keys/shipped/v0.1.16b-keys.json"),
+    include_str!("keys/shipped/v0.1.16c-keys.json"),
+    include_str!("keys/shipped/v0.1.16d-keys.json"),
 ];
 #[cfg(any(target_os = "macos", test))]
 const SHIPPED_MACOS_KEYS: &[&str] = &[
@@ -48,6 +52,10 @@ const SHIPPED_MACOS_KEYS: &[&str] = &[
     include_str!("keys/shipped/v0.1.5-keys.macos.json"),
     include_str!("keys/shipped/v0.1.15-keys.macos.json"),
     include_str!("keys/shipped/v0.1.15b-keys.macos.json"),
+    include_str!("keys/shipped/v0.1.16-keys.macos.json"),
+    include_str!("keys/shipped/v0.1.16b-keys.macos.json"),
+    include_str!("keys/shipped/v0.1.16c-keys.macos.json"),
+    include_str!("keys/shipped/v0.1.16d-keys.macos.json"),
 ];
 
 #[derive(serde::Deserialize)]
@@ -137,6 +145,10 @@ fn tab(section: &str) -> Result<String, String> {
 pub(crate) fn current(action: &str) -> String {
     if action == "mod.open:start" {
         return "tab.new".into();
+    }
+    // Go to file is native now (a keys.json from before still says the mod), unless the person kept the mod.
+    if action == "mod.open:goto-file" && !crate::mods::mods_dir().join("goto-file").is_dir() {
+        return "file.goto".into();
     }
     let command = |a: &str| crate::commands::find(a.split_once(':').map_or(a, |(n, _)| n)).is_some();
     for (old, new) in [("project.", "space."), ("context.", "tab.")] {
@@ -273,6 +285,9 @@ pub fn install(bindings: Vec<KeyBinding>, cx: &mut App) {
         KeyBinding::new(ESCAPE_HATCH, ShellAction::new("app.reset"), None),
         KeyBinding::new("escape", ShellAction::new("overlay.close"), Some("Overlay")),
     ]);
+    // The file editor's replace bar (the kit's own key is cmd-shift-f), as in Orca.
+    #[cfg(target_os = "macos")]
+    cx.bind_keys([KeyBinding::new("cmd-alt-f", gpui_base::input::Replace, Some("Input"))]);
     // The menu bar shows the keys it finds when it's built.
     #[cfg(target_os = "macos")]
     crate::macos::refresh_menus(cx);

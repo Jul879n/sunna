@@ -1,6 +1,6 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Scrollbar } from "gpui-base";
-import { spaces, panes, focused, exec, setShared, run, window, theme, tr, style } from "herdr";
+import { spaces, panes, focused, exec, run, window, theme, tr, style } from "herdr";
 
 // Radius scale: the theme's `style.radius` (6 = the original sizes).
 const R = (n) => Math.round(n * style().radius / 6);
@@ -117,7 +117,7 @@ export default class Search extends View {
     if (!q || this.running) return;
     const { cwd, on } = location();
     if (!cwd) { this.error = tr("search.no_folder"); cx.notify(); return; }
-    this.running = true; this.error = null;
+    this.running = true; this.error = null; this.on = on;
     cx.notify();
     cx.spawn(async (cx) => {
       try {
@@ -133,8 +133,8 @@ export default class Search extends View {
   }
 
   open(hit) {
-    setShared("files.reveal", { path: `${this.root}/${hit.path}`, line: hit.line, at: Date.now() });
-    run("layout.select", { stack: "panel-body", child: "files" });
+    // The editor opens it in its own tab, on the line of the hit ("" = this computer).
+    run("file.open", { path: `${this.root}/${hit.path}`, line: hit.line, on: this.on ?? "" });
   }
 
   toggle(t, id, label, on, flip) {

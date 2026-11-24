@@ -46,15 +46,34 @@ export default class Tabs extends View {
     try { this.panels = JSON.parse(localStorage.getItem("panels") ?? "{}"); } catch { this.panels = {}; }
     if (!this.panels || typeof this.panels !== "object" || Array.isArray(this.panels)) this.panels = {};
     this.swipe = { acc: 0, steps: 0, at: 0, last: 0 };
+    this.recent = []; // tab ids, the one in front last used
+    this.ids = []; // the active space's tab ids, in strip order
   }
 
   // One tab per wheel notch. A touchpad or smooth-scrolling mouse sends many
   // small events per gesture: a short swipe or one smoothed notch (about
   // 25 px) switches one tab, a longer swipe keeps going a tab per 60 px, at
   // most one every 100 ms so each shows.
+  // One step to the previous or next tab: by position, or (Settings > Look > Tab order) through the
+  // tabs in the order they were last used, as one gesture walks back through them.
+  go(command) {
+    if (shared("tabs.order") !== "recent" || !this.ids?.length) return run(command);
+    const now = Date.now();
+    if (!this.cycle || now - this.cycle.at > 1500) {
+      const rest = this.ids.filter((id) => !this.recent.includes(id));
+      this.cycle = { list: [...this.recent.filter((id) => this.ids.includes(id)), ...rest], i: 0, at: now };
+    }
+    const c = this.cycle;
+    c.at = now;
+    const i = Math.max(0, Math.min(c.list.length - 1, c.i + (command === "tab.prev" ? -1 : 1)));
+    if (i === c.i) return;
+    c.i = i;
+    run("tab.select", { id: c.list[i] });
+  }
+
   wheel(e) {
     if (e.delta_lines) {
-      if (e.delta_lines.y) run(e.delta_lines.y > 0 ? "tab.prev" : "tab.next");
+      if (e.delta_lines.y) this.go(e.delta_lines.y > 0 ? "tab.prev" : "tab.next");
       return;
     }
     const s = this.swipe, now = Date.now();
@@ -68,7 +87,7 @@ export default class Tabs extends View {
     s.acc -= Math.sign(s.acc) * need;
     s.steps++;
     s.last = now;
-    run(e.delta.y > 0 ? "tab.prev" : "tab.next");
+    this.go(e.delta.y > 0 ? "tab.prev" : "tab.next");
   }
 
   // The side panel is remembered per space: switching shows that space's choice
@@ -105,6 +124,8 @@ export default class Tabs extends View {
     const shown = space?.tabs ?? [];
     const active = shown.findIndex(tab => tab.active);
     const selected = shown[active]?.id;
+    this.ids = shown.map((c) => c.id);
+    if (selected && selected !== this.recent[0] && !(this.cycle && Date.now() - this.cycle.at < 1500)) this.recent = [selected, ...this.recent.filter((id) => id !== selected)].slice(0, 100);
     if (selected !== this.selected || active !== this.selectedIndex) {
       this.selected = selected;
       this.selectedIndex = active;
@@ -131,6 +152,8 @@ export default class Tabs extends View {
         .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); openOverlay({ mod: "menu", kind: "popup", width: 200, props: { tab: "tab", target: { id: c.id, space: space.id } } }); })
         .when(Boolean(program?.icon), el => el.child(program.tint ? svg(program.icon).size(14).text_color(t.muted) : image(program.icon).size(14)))
         .child(div().max_w(170).truncate().child(c.zoomed ? `${name} Z` : name))
+        // A file edited in this tab and not saved.
+        .when(c.dirty, el => el.child(div().size(7).flex_none().rounded(R(4)).bg(t.accent)))
         .when(c.status === "working", el => el.child(svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(t.working).spin(900)))
         .when(c.status === "blocked" || c.status === "done", el => el.child(div().size(6).rounded(R(3)).bg(t[c.status])))
         .when(c.active, el => el.child(div().id(`close-${c.id}`).text_color(t.dim).on_mouse_down("left", stop).on_click((_e, cx) => { cx.stop_propagation(); run("tab.close", { id: c.id }); }).child(svg("mods/pane/close.svg").size(12))));
@@ -169,7 +192,7 @@ export default class Tabs extends View {
       const [fallbackTitle, fallbackIcon] = PANEL_FALLBACK[c.id] ?? [c.id, GENERIC_PANEL_ICON];
       return panelButton(c.id, text(info.title ?? fallbackTitle), info.icon ?? fallbackIcon);
     });
-    return h_flex().size_full().min_w(0).px(10).gap(3).items_center().bg(t.chrome).border_b(1).border_color(t.border)
+    return h_flex().size_full().min_w(0).px(10).gap(3).items_center().bg(t.chrome)
       .on_mouse_up("left", () => { this.pressed = null; })
       .on_scroll_wheel(e => this.wheel(e))
       .child(h_flex().id("tab-scroll").flex_1().min_w(0).h_full().items_center().gap(3).overflow_x_scrollbar().track_scroll(this.scroll)
