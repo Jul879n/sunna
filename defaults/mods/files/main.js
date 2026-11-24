@@ -1,7 +1,7 @@
-// A lazy file browser for the focused pane's folder, with bounded read-only previews.
+// A lazy file browser for the focused pane's folder. A file opens in the editor (`file.open`), in its own tab.
 import { View, div, svg } from "gpui-kit";
-import { v_flex, h_flex, Editor, EditorState } from "gpui-base";
-import { spaces, panes, focused, exec, readTextFile, watchFolder, shared, theme, settings, window, tr, style } from "herdr";
+import { v_flex, h_flex } from "gpui-base";
+import { spaces, panes, focused, exec, run, watchFolder, shared, theme, window, tr, style } from "herdr";
 
 // Radius scale: the theme's `style.radius` (6 = the original sizes).
 const R = (n) => Math.round(n * style().radius / 6);
@@ -13,7 +13,6 @@ function location() {
   return { cwd: pane?.cwd || f?.cwd || space?.folder, on, space: space?.id };
 }
 const key = () => JSON.stringify(location());
-const LANG = { ts: "js", tsx: "js", mts: "js", cts: "js", jsx: "js", mjs: "js", toml: "yaml", jsonc: "json", svelte: "html", vue: "html" };
 const PER_FOLDER = 500, TOTAL = 5000;
 
 async function directory(path, on) {
@@ -41,6 +40,13 @@ async function directory(path, on) {
   return out;
 }
 
+// Names git ignores among `names` (relative to `cwd`): one `git check-ignore`, nothing when it is no repo.
+async function ignored(names, cwd, on) {
+  if (!names.length) return new Set();
+  const r = await exec("git", ["check-ignore", "-z", "--", ...names], { cwd, on }).catch(() => null);
+  return new Set(r && r.code === 0 ? r.stdout.split("\0").filter(Boolean) : []);
+}
+
 export default class Files extends View {
   init(_props, cx) {
     this.saved = new Map();
@@ -65,7 +71,12 @@ export default class Files extends View {
 
   async loadFolder(path, context) {
     const { on, cwd: root } = context;
-    const entries = await directory(path ? `${root}/${path}` : root, on);
+    let entries = await directory(path ? `${root}/${path}` : root, on);
+    // Settings > Look > Show ignored files: off hides what .gitignore names.
+    if (shared("files.ignored") === false) {
+      const skip = await ignored(entries.map((e) => (path ? `${path}/${e.name}` : e.name)), root, on);
+      entries = entries.filter((e) => !skip.has(path ? `${path}/${e.name}` : e.name));
+    }
     if (!this.current(context) || (path && !this.folders.has(path))) return;
     const used = [...this.entries.entries()].filter(([p]) => p !== path).reduce((n, [, e]) => n + e.length, 0);
     this.entries.set(path, entries.slice(0, Math.max(0, Math.min(PER_FOLDER, TOTAL - used))).sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name)));
@@ -75,12 +86,11 @@ export default class Files extends View {
   refresh(cx) {
     const { cwd, on } = location(), next = key();
     if (next !== this.context?.key) {
-      if (this.context) this.saved.set(this.context.key, { folders: this.folders, file: this.file });
+      if (this.context) this.saved.set(this.context.key, { folders: this.folders });
       const saved = this.saved.get(next);
       this.context = { key: next, cwd, on }; this.root = cwd; this.on = on; this.entries = new Map(); this.folders = new Set(saved?.folders);
-      this.pending = new Set(); this.marks = {}; this.show(null); this.watched = null; this.error = null; this.limited = false;
+      this.pending = new Set(); this.marks = {}; this.watched = null; this.error = null; this.limited = false;
       this.loading = false;
-      if (saved?.file) this.show(saved.file, cx);
     }
     if (!cwd || this.loading) return;
     const context = this.context;
@@ -105,7 +115,7 @@ export default class Files extends View {
         if (!this.current(context)) return;
         this.marks = marks; this.error = null; this.watch(cwd, cx);
       } catch (e) { if (this.current(context)) this.error = String(e); }
-      finally { if (this.context === context) this.loading = false; cx.notify(); }
+      finally { if (this.context === context) this.loading = false; cx.notify(); if (this.again && !this.loading) { this.again = false; this.refresh(cx); } }
     });
   }
 
@@ -130,24 +140,9 @@ export default class Files extends View {
     cx.notify();
   }
 
-  show(path, cx) {
-    this.code?.release(); this.code = null; this.file = path; this.fileError = null;
-    if (!path || !cx) return;
-    const context = this.context, root = this.root, on = this.on;
-    cx.spawn(async cx => {
-      try {
-        const text = await readTextFile(`${root}/${path}`, { on });
-        if (this.file !== path || !this.current(context)) return;
-        if (text === null) { this.fileError = tr("files.this_file_is_no_longer"); return; }
-        if (text.includes("\0")) { this.fileError = tr("files.binary_file_no_text"); return; }
-        const t = theme(), ext = path.includes(".") ? path.split(".").pop() : "txt";
-        this.code = EditorState.new({ language: LANG[ext] ?? ext, readonly: true,
-          value: text.length > 400000 ? text.slice(0, 400000) + "\n" + tr("files.file_truncated") : text,
-          font_family: settings().font_family, font_size: 12,
-          syntax: { keyword: t.ansi5, string: t.ansi2, comment: t.dim, function: t.ansi4, type: t.ansi3, number: t.ansi1, constant: t.ansi6 } });
-      } catch { if (this.file === path && this.current(context)) this.fileError = tr("files.cannot_preview_this_file_binary"); }
-      finally { cx.notify(); }
-    });
+  // The editor reads the file itself (on this machine, or read only on another: "" is this computer).
+  show(path) {
+    if (this.root) run("file.open", { path: `${this.root}/${path}`, on: this.on ?? "" });
   }
 
   rows(prefix, depth, out, t) {
@@ -155,8 +150,12 @@ export default class Files extends View {
     for (const entry of this.entries.get(prefix) ?? []) {
       if (out.length >= TOTAL) break;
       const path = prefix ? `${prefix}/${entry.name}` : entry.name, open = this.folders.has(path), mark = this.marks[`${this.root}/${path}`];
+      // Settings > General > Open files: with "double" a click only picks a file, a double click opens it.
+      const double = !entry.dir && shared("files.open") === "double";
       out.push(h_flex().id(`file-${path}`).h(28).flex_none().pl(8 + depth * 18).pr(8).gap(7).items_center().rounded(R(7)).cursor_pointer().hover(s => s.bg(t.hover))
-        .on_click((_e, cx) => entry.dir ? this.toggle(path, cx) : this.show(path, cx))
+        .when(double && this.picked === path, el => el.bg(t.selected))
+        .when(!double, el => el.on_click((_e, cx) => entry.dir ? this.toggle(path, cx) : this.show(path)))
+        .when(double, el => el.on_mouse_down("left", (e, cx) => { if (e.click_count >= 2) this.show(path); else { this.picked = path; cx.notify(); } }))
         .child(entry.dir ? svg(`mods/files/chevron-${open ? "down" : "right"}.svg`).size(12).flex_none().text_color(t.dim) : div().w(12).flex_none())
         .child(svg(`mods/files/${entry.dir ? "folder" : "file"}.svg`).size(14).flex_none().text_color(t.muted))
         .child(div().flex_1().min_w(0).truncate().child(entry.name))
@@ -168,21 +167,20 @@ export default class Files extends View {
 
   render(cx) {
     if (key() !== this.context?.key) this.refresh(cx);
-    // The Search panel asks for a file with shared("files.reveal"): open it once.
-    const reveal = shared("files.reveal");
-    if (reveal?.at > (this.revealedAt ?? 0) && this.root && reveal.path?.startsWith(this.root + "/")) {
-      this.revealedAt = reveal.at;
-      this.show(reveal.path.slice(this.root.length + 1), cx);
+    // Showing ignored files changed: read the folders again.
+    const ignoredNow = shared("files.ignored") !== false;
+    if (ignoredNow !== this.ignoredShown) {
+      const first = this.ignoredShown === undefined;
+      this.ignoredShown = ignoredNow;
+      if (!first) { if (this.loading) this.again = true; else this.refresh(cx); }
     }
     const t = theme();
     return v_flex().id("files").size_full().min_h(0).rounded(R(10)).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13)
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
-        .when(Boolean(this.file), el => el.child(div().id("files-back").w(20).cursor_pointer().text_color(t.muted).on_click((_e, cx) => { this.show(null); cx.notify(); }).child("←")))
         .child(div().font_semibold().child(tr("files.files")))
-        .child(div().flex_1().min_w(0).truncate().text_right().text_size(12).text_color(t.dim).child(this.file ?? this.root?.split(/[\\/]/).pop() ?? "")))
-      .when(!this.file, el => el.child(v_flex().id("files-tree").flex_1().min_h(0).overflow_y_scrollbar().p(6).children(this.rows("", 0, [], t))
-        .when(Boolean(this.error) || !this.entries.get("")?.length, el => el.child(div().p(8).text_size(12).text_color(t.dim).child(this.error || (this.loading ? tr("files.loading_files") : this.root ? tr("files.no_files") : tr("files.no_folder")))))
-        .when(this.limited, el => el.child(div().p(8).text_size(11).text_color(t.dim).child(tr("files.file_list_limited_to_500"))))))
-      .when(Boolean(this.file), el => el.child(this.code ? Editor.new(this.code).flex_1().min_h(0) : div().p(12).text_color(t.dim).child(this.fileError || tr("files.loading_file"))));
+        .child(div().flex_1().min_w(0).truncate().text_right().text_size(12).text_color(t.dim).child(this.root?.split(/[\\/]/).pop() ?? "")))
+      .child(v_flex().id("files-tree").flex_1().min_h(0).overflow_y_scrollbar().p(6).children(this.rows("", 0, [], t))
+        .when(Boolean(this.error) || !this.entries.get("")?.length, el => el.child(div().p(8).text_size(12).text_color(t.dim).child(this.error || (this.loading ? tr("files.loading_files") : this.root ? tr("files.no_files") : tr("welcome.empty_files")))))
+        .when(this.limited, el => el.child(div().p(8).text_size(11).text_color(t.dim).child(tr("files.file_list_limited_to_500")))));
   }
 }

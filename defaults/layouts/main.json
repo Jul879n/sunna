@@ -11,16 +11,13 @@
     14,
     12
   ],
-  "divider": {
-    "width": 1,
-    "color": "border"
-  },
+  "resizable": false,
   "children": [
     {
       "id": "topbar",
       "type": "row",
       "size": {
-        "px": 42
+        "px": 44
       },
       "resizable": false,
       "children": [
@@ -48,7 +45,6 @@
     {
       "id": "body",
       "type": "row",
-      "resizable": false,
       "children": [
         {
           "id": "sidebar",
@@ -96,6 +92,7 @@
         {
           "id": "work",
           "type": "column",
+          "background": "chrome",
           "resizable": false,
           "children": [
             {
@@ -174,6 +171,13 @@
                           "type": "block",
                           "content": {
                             "mod": "bots"
+                          }
+                        },
+                        {
+                          "id": "activity",
+                          "type": "block",
+                          "content": {
+                            "mod": "activity"
                           }
                         }
                       ]

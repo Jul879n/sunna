@@ -23,7 +23,7 @@ pub fn read(path: &Path) -> Result<Option<String>, String> {
     Ok(Some(text))
 }
 
-fn write(path: &Path, text: &str, expected: Option<&str>) -> Result<(), String> {
+pub(crate) fn write(path: &Path, text: &str, expected: Option<&str>) -> Result<(), String> {
     let _guard = WRITES.lock().map_err(|e| e.to_string())?;
     if text.len() as u64 > LIMIT {
         return Err(crate::i18n::t("rs.mod_files.text_file_exceeds_1_mib"));

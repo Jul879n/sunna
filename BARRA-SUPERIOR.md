@@ -15,7 +15,7 @@ Referencia: Orca. Una barra que cruza toda la ventana (semáforos, marca, botón
 ## Falta
 - [ ] Compilar y correr `cargo test --locked mods::render_tests` (la ejecución se detuvo).
 - [ ] Revisar `scripts/settings.test.ts` (línea ~168 asume `sidebar` con hijos `brand` y `spaces`) y cualquier test que lea `layout["children"][0]`.
-- [ ] Revisar el editor de barra lateral (`defaults/frame/settings/sidebar.js`) y `find()` en los mods: el árbol ahora tiene un nivel más.
+- [ ] Revisar el editor de barra lateral (`src/window/settings/sidebar.rs`) y `find()` en los mods: el árbol ahora tiene un nivel más.
 - [ ] Probar en la app real (home aislado): semáforos de macOS, arrastrar la ventana desde la barra, alternar ancha/compacta, pantalla completa.
 - [ ] La marca no sigue al arrastrar el borde de la barra lateral (solo al usar el botón).
 - [ ] Documentar en `defaults/AGENTS.md`.

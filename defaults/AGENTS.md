@@ -110,8 +110,10 @@ Mod pane props are stored as given, never machine-qualified. Space order is loca
 machine first, then machines by name; `space.move` stays inside its machine's block.
 In the expanded Spaces sidebar, drag a space to reorder it within its machine;
 the highlighted line shows where it will land.
-Right-click a project header for its menu (new worktree in a repo, show in the
-file manager on this machine, copy path, hide). Hidden projects leave the list
+Click a project header to fold it to just that row (a dot shows when one of its
+agents works or is blocked); the folded keys are `shared("space.folded")`.
+Right-click a project header for its menu (new and open worktree in a repo, show
+in the file manager on this machine, copy path, hide). Hidden projects leave the list
 and sit under a folded "Hidden projects" row with Show; the project holding the
 active space is never hidden. The hidden keys are `shared("space.hidden")`.
 A project's tile shows the icon the repo ships (the first of `assets/icon.png`,
@@ -474,11 +476,7 @@ The default window:
                     "focus": { "width": 1, "color": "accent" } } } } ] } ] }
 ```
 
-Sidebar on the right: swap the two children of `root`. No sidebar: set
-`"hidden": true` on `sidebar` (the user can toggle it: `ctrl-shift-b`).
-Narrower than 160px, the sidebar mods draw a compact rail; folding resizes
-`sidebar` to 44 (76 on macOS, room for the traffic lights). On macOS,
-the tabs also leave room for the window buttons when the sidebar is narrower.
+The `main` layout puts a fixed top bar (`topbar`: `brand` and `tabs`) above `body` (`sidebar` and `work`). Sidebar on the right: swap the two children of `body`. No sidebar: set `"hidden": true` on `sidebar` (the user can toggle it: `ctrl-shift-b`). Narrower than 160px, the sidebar mods draw a compact rail; folding resizes `sidebar` to 44. `brand` holds the window buttons on macOS and follows the sidebar's width (dragged or folded; 178 px on macOS and 108 elsewhere while folded or hidden, room for the logo, search and the toggle. There are no edge-to-edge lines: the areas split by background and short faded dividers). Layouts copied from `main` before this keep their old shape.
 
 ### Themes, mods and panels people add from Settings
 
@@ -490,7 +488,10 @@ the tabs also leave room for the window buttons when the sidebar is narrower.
   fields `name`, `description`, `author`, `version`, `homepage`, `preview` and
   `panel: { "title", "icon" }`. A mod can be turned off (its folder moves to
   `mod-store/disabled/<name>/`) and back, or deleted. Herdr's own mods can only
-  be duplicated (`mod.clone`).
+  be duplicated (`mod.clone`). The installed list has a search and an
+  All/Active/Disabled/Updates filter; installed mods are checked for updates
+  once per session. Settings has a search box that jumps to the section
+  holding a setting.
 - Install: from `owner/repo[@ref]`, a git URL or a folder. Herdr shows what
   it found and what each mod can do (programs, network, files) before
   copying; nothing existing is overwritten. An installed mod keeps
@@ -498,15 +499,58 @@ the tabs also leave room for the window buttons when the sidebar is narrower.
   checked for updates. The *Explore* tab lists GitHub repos with the topic
   `herdr-mod` or `herdr-theme`.
 - Right sidebar: the stack `panel-body` of the `main` layout holds the panels
-  (`files`, `changes`, `search`, `bots`). A mod whose `mod.json` has `panel`
+  (`files`, `changes`, `search`, `bots`, `activity`). A mod whose `mod.json` has `panel`
   can be added as a child `panel-<mod>` (`{"content":{"mod":"<mod>"}}`);
   Settings > Layout > Right sidebar adds, orders and removes them, and
   `shared("workspace.panels")` lists the ids shown in the tab bar. Editing a
   Herdr layout copies it to `my-<name>` first.
 - Search panel (`mods/search`): text search in the focused folder with `rg`,
-  else `git grep`, else `grep`. A result opens in Files (`shared("files.reveal")`).
+  else `git grep`, else `grep`. A result opens in the file editor on its line (`file.open`).
 - Changes panel: branch, ahead/behind, fetch, pull (`--ff-only`), push, a
   branch picker and a History tab, run with `git` in the repository.
+
+### Settings that live in `shared()` (Look, General, Git and spaces)
+
+Settings writes these with `setShared`; the mod that owns each one reads them, and a
+missing value means the default. You may set them from a mod too.
+
+| Key | Value (default) | Read by |
+|---|---|---|
+| `space.card` | `{git, ago, agents}` booleans (all `true`): git line, time ago, agents under a space | `spaces` |
+| `space.branch_names` | `true`: an unnamed space shows its branch (`false`) | `spaces` |
+| `sidebar.buttons` | `{search, bots}` (both `true`) | `spaces` |
+| `status.items` | `{machine, branch, agents, awake, hint}` (all `true`) | `workspace-status` |
+| `status.format` | `"total"` or `"working"`: which agent count shows | `workspace-status` |
+| `tabs.order` | `"strip"` or `"recent"`: the wheel on the tab bar moves by position or by last use | `tabs` |
+| `files.ignored` | `false` hides what `.gitignore` names (`true`) | `files` |
+| `files.open` | `"click"` or `"double"`: a double click opens a file in the editor | `files` |
+| `menu.open_in` | app names (`[]`): an "Open in" item per app on local project and space menus; macOS `open -a <app>`, elsewhere the command | `menu` |
+| `worktree.nest` | `false`: worktrees go in `<dir>/<branch>`, not `<dir>/<repo>/<branch>` (`true`) | `worktree` |
+| `worktree.external` | `false`: Open worktree lists only the main checkout and those under the folder (`true`) | `worktree` |
+| `worktree.prefix_mode`, `worktree.prefix` | `"none"` / `"git"` (the git user name) / `"custom"` with the text in `worktree.prefix` | `worktree` |
+| `worktree.template` | branch name with `{name}`, `{date}`, `{repo}` (`"{name}"`); an existing branch is used as typed | `worktree` |
+| `worktree.fresh` | `true`: a new branch starts from `origin`'s default branch after a fetch, and the local copy is fast-forwarded when free (`false`) | `worktree` |
+| `changes.base` | `"head"` (uncommitted), `"default"` (since the repo's default branch) or `"upstream"` | `changes` |
+| `changes.groups` | `"flat"`, `"status"` or `"new_first"`: group the file list by status | `changes` |
+
+The worktrees folder is still `worktrees.directory` in `settings.json`; Settings > General
+edits it.
+
+The `activity` panel lists every agent with filters (status, program, text) and
+counts, and keeps a log of when agents finished or needed you. The `agents`
+mod writes that log to `shared("activity.events")` (newest first, up to 100:
+`{kind: "blocked" | "done", address, name, at}`); `shared("activity.seen")` is
+the time it was last looked at.
+
+The `welcome` mod is the screen shown in the main area while no space is open
+(and only then): the logo and name, a subtitle, the buttons *Add project* (the
+`add-project` popup) and *Create workspace* (`space.new`), and the shortcuts for
+`space.new`, `space.prev` and `space.next` read from `keys()`, so a rebound key
+shows as rebound (an unbound action is left out). The app mounts it in that
+branch of the layout's `tab: "active"` block; it is not placed in a layout and
+takes no props. Customize it by editing `mods/welcome/` (texts are
+`welcome.empty_*` in `locales/`; the shortcuts are `SHORTCUTS` in `model.js`).
+The Files and Changes panels show *Select a workspace to see ...* with no space.
 
 ### Bots: `bots/<name>/`
 
@@ -520,14 +564,23 @@ while the window is open). Files in `bots/<name>/`:
   `{"type":"manual"}`, `{"type":"interval","minutes":60}`,
   `{"type":"daily","at":"09:00"}`, `{"type":"github","query":"is:pr is:open
   review-requested:@me","every_minutes":10}` (needs `gh`).
+  A `daily` trigger may add `"days": [1,2,3,4,5]` (0 = Sunday) and
+  `"grace_minutes": 30` (a slot missed by longer is dropped). `bot.json` may
+  hold `"precheck": "<shell command>"`: when it exits non-zero an automatic
+  run is skipped (recorded with `"status": "skipped"`; *Ejecutar ahora*
+  ignores it). A run that could not start is recorded `"status": "failed"`.
 - `runs.json`: written by the mod (last 100 runs, items already seen).
 
 The panel's *Plantillas* button opens a gallery (search, categories: releases,
 support, planning, personal) of starting points; each has the text it starts
 with and its triggers. A template with a schedule or GitHub trigger creates its
 bot switched off (`"enabled": false`) until the person turns it on; a manual
-one is ready. A bot's *Detalle* shows where it runs and what permissions it has
-(it acts as the person). The sidebar asks the panel for the gallery or a new
+one is ready. With no bots the panel shows the templates as cards. Each bot's
+card shows its schedule, when it fires next and how long ago it last ran
+(*Pausar*/*Reanudar* switches `enabled`; *Eliminar* deletes the folder after a
+second click), and *Ejecutar ahora* says why it would be refused (daily cap,
+previous run still working). A bot's *Detalle* shows where it runs, what
+permissions it has (it acts as the person) and its last 8 runs. The sidebar asks the panel for the gallery or a new
 bot with the shared keys `bots.templates` and `bots.new` (a timestamp).
 
 Each run is a tab `bot <name> #n` in the space `bot: <name>`, started without
@@ -679,7 +732,7 @@ The main ones:
   space shown, the new space is shown), for work the person looks at later;
   such tabs go last in their space, in the order made. `focus` is a boolean.
 - Panes: `pane.split {direction: "right" | "down", pane?, argv? | mod?, props?}` (a new
-  terminal, or a mod pane), `pane.close {pane?}`,
+  terminal, or a mod pane), `pane.close {pane?, confirmed?}`,
   `pane.zoom {pane?}`, `pane.focus {pane | terminal}`, `pane.go {direction}`,
   `pane.swap {pane?, direction | target}`.
   `pane.zoom` also makes the pane its tab's focused one (the tab isn't
@@ -749,7 +802,7 @@ The main ones:
   (personal tree edits; on shipped layouts only click/look fields change),
   `layout.reset {name?}` (reset a shipped layout and its clicks),
   `layout.clone {name, as?}` (duplicate, then switch; default `<name>-copy`).
-- App: `mod.clone {name, as?}` (duplicate; default `<name>-copy`), `mod.open {name}` (again: closes it), `overlay.close {id?}`, `app.help` (again: closes it), `app.palette` (again: closes it), `app.settings {section?}` (section: look, layout, mods, general, agents, keyboard, machines, alerts, updates, privacy), `app.keep_awake {mode?}`
+- App: `mod.clone {name, as?}` (duplicate; default `<name>-copy`), `mod.open {name}` (again: closes it), `overlay.close {id?}`, `app.help` (again: closes it), `app.palette` (again: closes it), `app.settings {section?}` (section: look, general, git, agents, terminal, editor, keyboard, machines, alerts, updates, privacy, mods; an unknown one opens the first), `app.keep_awake {mode?}`
   (sections: `look`, `machines`, `alerts`, `updates`, `privacy`; Machines lists, updates, renames and removes ssh machines; settings edit the same files you do).
   `app.check_updates` (only a successful check reports Up to date; a failed check clears the checked time and can be retried), `app.update_core` (a newer herdr-core of this generation, terminals kept;
   never one a package manager owns), `app.welcome`, `app.whats_new`, `app.feedback {message?, from?}` (from `"person"` or `"agent"`; opens a review window, where the person can paste up to 3 screenshots; never sends until the person clicks Send), `app.reset`,
@@ -769,8 +822,66 @@ The main ones:
   or replaced and a different core answers there, its sidebar offers Connect:
   explicitly forget the old identity and pair again with the same name and target.
   Other unreachable machines don't offer this.
-- Window: `window.minimize`, `window.maximize` (or back), `window.close`.
-- macOS: `app.quit`, `app.hide`, `app.hide_others`, `app.show_all`.
+- Window: `window.minimize`, `window.maximize` (or back), `window.close {confirmed?}`.
+- macOS: `app.quit {confirmed?}`, `app.hide`, `app.hide_others`, `app.show_all`.
+- Files (the editor, below): `file.open {path, line?, on?, space?, focus?}`, `file.goto` (Go to file; again: closes it),
+  `editor.save {pane?, force?}`, `editor.preview {pane?, on?}`,
+  `editor.reload {pane?, confirmed?}`, `editor.goto {line, pane?}`,
+  `editor.save_close {then, panes?}`.
+
+### The file editor
+
+Sunna edits files itself, as Orca does: a native code editor (syntax
+highlighting by extension, line numbers, folding, find and replace), one tab
+per file.
+
+- `file.open {path, line?, on?}` opens a file in its own tab, or shows the tab
+  that already has it. `path` is absolute or relative to the space's folder;
+  `line` (1 is the first) puts the cursor there; `on` is the machine the file is
+  on (default: the shown space's machine; `""`: this computer). The Files panel
+  (click or double click, by `files.open`), a Search result, a bot's SOUL.md and a
+  file dropped on the window (where no terminal takes it) all run it. Folders are
+  not files.
+- An editor pane is a mod pane named `editor` with `props: { file, on? }`, so
+  `tab.new {mod: "editor", props: {file: "/path/a.rs"}}` and
+  `pane.split {direction, mod: "editor", props: {file}}` (a file beside a
+  terminal) work and the layout document keeps them like any mod pane. It needs
+  no folder in `mods/`. `spaces()[].tabs[].dirty` and `panes()[].file/dirty` say
+  which have unsaved changes (the tab bar shows a dot).
+- Keys in the `mod:editor` section of keys.json: `cmd-s` (`ctrl-s`) `editor.save`,
+  `cmd-shift-v` (`ctrl-shift-v`) `editor.preview` (markdown as formatted text).
+  The editor itself has find (`cmd-f`, `ctrl-f`) and replace (`cmd-alt-f` or
+  `cmd-shift-f` on Mac, `ctrl-h` elsewhere), undo and redo.
+- Saving never overwrites what changed on disk since the file was read: the pane
+  says so with Overwrite and Reload from disk, `editor.save` fails, and `force:
+  true` overwrites. A file that changes on disk while it has no unsaved edits is
+  shown again by itself (checked every 2 seconds).
+- Closing a tab, pane or space, `window.close` and `app.quit` with unsaved
+  changes ask first; scripts must pass `confirmed: true` (they get an error
+  naming the files otherwise). The dialog offers Save and close (Enter),
+  Discard and Cancel; Save and close is `editor.save_close {then: {name, args},
+  panes?}`: it saves each file with unsaved changes, then runs `then` as
+  confirmed. If a file can't be saved (it changed on disk, a write error) nothing
+  closes, that file is shown and an error toast says which.
+- `cmd-p` (`ctrl-p`) is Go to file, the native command `file.goto` (again: closes it):
+  fuzzy search by name over the files of the focused pane's project (`rg --files`,
+  else `git ls-files`, else `find`; `.gitignore` is followed with rg and git;
+  `.git`, `node_modules` and `target` are never listed; the first 60000 files, and
+  the dialog says so). The files opened last come first. Enter opens the file
+  with `file.open`. The tab and agent selector is now `cmd-alt-p` (`ctrl-alt-p`)
+  and the palette's Go to space or tab; the palette also lists Go to file.
+  A `keys.json` that still says `mod.open:goto-file` keeps working: it runs
+  `file.goto` unless you have a mod folder of that name.
+- The confirmation dialog (close a space, tab or pane, quit, discard unsaved
+  changes, reload a file) is native too. A mod that opens an overlay named
+  `confirm` with `props { title, detail, confirm_label?, command: {name, args},
+  extra?: {label, command} }` still gets it (unless you keep your own `confirm`
+  mod folder); Enter runs `extra` when there is one, else `command`.
+- Files on another machine open read only (the local API can't write there).
+  A file that is binary, not UTF-8 or over 1 MiB shows why it isn't opened. Line
+  ends of Windows files (all `\r\n`) are kept on save.
+- Settings > Editor (`shared()` keys `editor.font_size`, `editor.line_numbers`,
+  `editor.folding`, `editor.wrap`) applies to every open file at once.
 
 When the user runs a command without a required name (a key, a click), Herdr
 asks them. **You never get a dialog**: pass every required argument, or the
@@ -840,6 +951,19 @@ What's about the user, never a look:
 - `font_ligatures`: programming ligatures are off by default; set `true` to
   enable them in terminal fonts such as JetBrains Mono and Fira Code. The cursor
   and background changes (including selections) break ligatures so individual cells stay clear.
+- `terminal_padding` (`[x, y]` px) and `terminal_opacity` (0..1): the space
+  around terminal text and its background opacity. Unlike fonts, the person's
+  own value wins over the layout's; absent, the layout's. `scroll_on_input`
+  (default `true`): typing scrolls a terminal back to the bottom.
+- `notifications`: `{ "enabled": true, "done": true, "blocked": true }`. `enabled`
+  off posts no toasts; `done` / `blocked` off silence that kind of agent alert
+  (toast and sound). Settings > Alerts.
+- Settings > Terminal gathers the terminal keys (fonts, line height, cell
+  width, scroll speed, `copy_on_select`, `clipboard_write`, `minimum_contrast`,
+  `pane_scrollbars`, the three above). Settings > Editor writes `shared()` keys
+  the file editor reads: `editor.font_size` (default 12, the terminal's
+  font), `editor.line_numbers`, `editor.folding` (both default true) and
+  `editor.wrap` (default false).
 - `theme`: a theme name or `{light, dark}`; used where the layout sets none.
   The theme picker overrides any layout and stays on that layout.
 - `colors`: theme color overrides (`{"accent":"#ff8800"}`), with the same
@@ -893,9 +1017,10 @@ What's about the user, never a look:
   Option input on every layout. `"left"` / `"right"` makes only that Option
   key act as Alt; the other types characters. Changes apply immediately, including layout
   switches. Linux and Windows are unchanged.
-- `minimum_contrast`: terminal text contrast ratio, `1` (default) leaves
-  program colors unchanged. Set it to `1.6` to enable the previous readability
-  adjustment, or another number from `1` to `21`. Text below that ratio is
+- `minimum_contrast`: terminal text contrast ratio. Unset, it is `1` (leaves
+  program colors unchanged) on dark themes and `1.6` on light ones, where white
+  text would vanish; write `1` to turn it off there. Set `1.6` on a dark theme
+  to enable the same readability adjustment, or another number from `1` to `21`. Text below that ratio is
   replaced with near-white or near-black, whichever contrasts more with its
   background; this is a threshold, not a guaranteed resulting ratio.
   Box/block, Powerline and sprite glyph colors are never adjusted.
@@ -1010,19 +1135,26 @@ has 124 programs (agents, editors, runtimes, tools, databases, infra);
   (tinted with the text color). Saving an asset under `mods/` updates every
   mod showing it, including images that were missing or invalid on first load.
 - The defaults are mods too, read them as examples: `spaces`, `agents`,
-  `tabs` (the tab bar), `menu`, `prompt`, `confirm`, `help`, `toast`,
+  `tabs` (the tab bar), `menu`, `prompt`, `help`, `toast`,
   Terminals' `picker`, `peek`, and `pane` (an
   example pane header, not used by the default layouts), and `worktree`
   (git worktrees as spaces: the space menu's and the + menu's New worktree,
   Open worktree (the repo's checkouts, filtered; one already shown is gone
-  to) and Remove worktree open it as a dialog with props `{space, folder?,
+  to; each linked one has a remove button, the main one never), Clean up
+  worktrees (project menu, `action: "cleanup"`: the linked checkouts with
+  merged / changes / agent-working evidence, merged clean ones preselected,
+  removed together after a second click, never forced) and Remove
+  worktree open it as a dialog with props `{space, folder?, name?,
   action: "new" | "open" | "remove"}` (the repo: folder, else where the
-  space's first terminal is), or with `{branch, tab?, argv?}` to make one at once with
+  space's first terminal is; a checkout with no open space is removed from
+  its folder, closing nothing; a repo with only its main checkout offers a
+  first worktree), or with `{branch, tab?, argv?}` to make one at once with
   that first tab; checkouts go to
   `<worktrees.directory>/<repo>/<branch>` on the space's machine (default
   `~/.herdr/worktrees`; see settings.json above); the
   `spaces` sidebar nests worktree spaces under their repo's and shows each
-  space's repo, branch, ahead/behind and uncommitted changes). Shipped mods
+  space's repo, branch (when the name does not say it), ahead/behind and a dot
+  for uncommitted changes on a second line). Shipped mods
   are Herdr's; duplicate with `mod.clone` before editing.
 
 ### Check before you finish
@@ -1155,8 +1287,9 @@ and other interactive controls too.
 them. Text: `TextView.markdown(id, text)` renders markdown; `EditorState.new({
 language, value, readonly, font_family: settings().font_family, syntax: {
 keyword: theme().ansi5, ... } })` + `Editor.new(state)` is a code view (readonly)
-or editor with syntax highlighting, line numbers and folding. A viewer opens
-beside the shell as a pane: `pane.split {direction, mod, props: { file }}`.
+or editor with syntax highlighting, line numbers and folding. To show a file
+as a pane, don't draw it: `file.open {path}` opens the app's own editor, and
+`pane.split {direction, mod: "editor", props: { file }}` puts it beside the shell.
 The full surface is in `gpui-kit.d.ts` next to this file.
 
 ### The `herdr` module

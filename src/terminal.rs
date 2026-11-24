@@ -674,7 +674,9 @@ impl TerminalView {
         if let Some(ch) = g.channel
             && !bytes.is_empty()
         {
-            g.vt.scroll_to_bottom();
+            if crate::settings::get().scroll_on_input {
+                g.vt.scroll_to_bottom();
+            }
             g.core.input(ch, bytes);
         }
     }

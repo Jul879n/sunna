@@ -52,6 +52,9 @@ function title(tab, l) {
   const telling = live && live !== (l?.terminal ?? l?.address) && live !== prog && !path && !live.includes("@") && live.toLowerCase() !== l?.program?.key;
   return (tab.name === prog || !tab.named) && telling ? live : tab.name;
 }
+// Copies of activity/model.js (a mod reads only its own folder): what a change of status is news for, and the capped feed.
+const eventFor = (before, after) => !before || before === after ? null : after === "blocked" ? "blocked" : before === "working" && (after === "idle" || after === "done") ? "done" : null;
+const withEvent = (events, event) => [event, ...(Array.isArray(events) ? events : [])].slice(0, 100);
 const RANK = { blocked: 4, done: 3, working: 2, idle: 1 };
 // A sub-agent without a pane isn't in agents(): its raw word, error counting as
 // blocked. It's never done: it reports to its parent, and the parent's done is the news.
@@ -114,13 +117,19 @@ export default class Agents extends View {
   // finished agent turns done into idle, and looking isn't the agent doing anything.
   track(list, now) {
     let dirty = false;
+    const news = [];
     for (const a of list) {
       const s = a.status === "done" ? "idle" : a.status;
       if (this.changed[a.address]?.s === s) continue;
+      // News for the activity feed: it needs you, or it stopped working.
+      const kind = eventFor(this.changed[a.address]?.s, s);
+      if (kind) news.push({ kind, address: a.address, name: a.space_name || a.tab_name || a.address, at: now });
       this.changed[a.address] = { s, at: now };
       dirty = true;
     }
     if (!dirty) return;
+    // Written after this render: a shared write during it would redraw mid-frame.
+    if (news.length) Promise.resolve().then(() => setShared("activity.events", news.reduce((feed, e) => withEvent(feed, e), shared("activity.events") ?? [])));
     // Gone and old: the list alone is empty right after a start.
     const listed = new Set(list.map((a) => a.address));
     for (const [k, c] of Object.entries(this.changed)) if (!listed.has(k) && now - c.at > 30 * 86400000) delete this.changed[k];

@@ -15,6 +15,9 @@ fn walk(dir: &Path, base: &Path, root: &Path, out: &mut Vec<String>) {
     for p in entries {
         if p.is_dir() {
             walk(&p, base, root, out);
+        } else if matches!(p.file_name().and_then(|n| n.to_str()), Some("gpui-kit.d.ts" | "jsconfig.json")) {
+            // Git ignores these editor helpers: a local run writes them here, and shipping them would read as an edit.
+            continue;
         } else {
             let path = p.strip_prefix(base).unwrap().to_string_lossy().replace('\\', "/");
             println!("cargo:rerun-if-changed={path}");

@@ -49,6 +49,11 @@ fn checking() -> bool {
 /// again when the home brings new ones.
 static FONTS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 
+/// The font families this computer has (what `fonts()` gives mods).
+pub(crate) fn fonts() -> Vec<String> {
+    FONTS.lock().unwrap().clone()
+}
+
 pub fn note_fonts(cx: &gpui::App) {
     // Names starting with "." are the system's private UI fonts (macOS).
     let mut names: Vec<String> = cx.text_system().all_font_names().into_iter().filter(|n| !n.starts_with('.')).collect();
@@ -335,6 +340,11 @@ pub fn kinds(names: &std::collections::BTreeSet<String>) -> (Vec<String>, usize,
     (builtin, edited, custom)
 }
 
+/// Editor helpers gpui-shell regenerates every time it loads a mod: never part of what a person edited.
+fn generated(file: &str) -> bool {
+    matches!(file, "gpui-kit.d.ts" | "jsconfig.json")
+}
+
 /// Exactly as installed: every file unchanged and none added.
 fn as_shipped(dir: &Path, files: &Files) -> bool {
     fn walk(root: &Path, dir: &Path, out: &mut Vec<String>) {
@@ -352,9 +362,10 @@ fn as_shipped(dir: &Path, files: &Files) -> bool {
     }
     let mut found = Vec::new();
     walk(dir, dir, &mut found);
-    // gpui-shell writes these editor helpers when it loads a mod.
-    found.retain(|f| !matches!(f.as_str(), "gpui-kit.d.ts" | "jsconfig.json") || files.contains_key(f));
-    found.len() == files.len() && found.iter().all(|f| files.contains_key(f)) && untouched(dir, files)
+    // Regenerated on load, so a copy recorded by an older build (it embedded them by mistake) must not read as an edit either.
+    found.retain(|f| !generated(f));
+    let wanted = files.keys().filter(|f| !generated(f)).count();
+    found.len() == wanted && found.iter().all(|f| files.contains_key(f)) && untouched(dir, files)
 }
 
 /// File path (inside the mod) to content fingerprint.
@@ -370,7 +381,7 @@ fn fingerprint(bytes: &[u8]) -> String {
 
 /// Whether every file Herdr installed is still there as installed.
 fn untouched(dir: &Path, files: &Files) -> bool {
-    files.iter().all(|(path, want)| std::fs::read(dir.join(path)).is_ok_and(|b| fingerprint(&b) == *want))
+    files.iter().filter(|(path, _)| !generated(path)).all(|(path, want)| std::fs::read(dir.join(path)).is_ok_and(|b| fingerprint(&b) == *want))
 }
 
 fn write_if_changed(path: &Path, content: impl AsRef<[u8]>) -> std::io::Result<()> {
@@ -641,6 +652,11 @@ fn publish(key: &'static str, set: impl FnOnce(&mut Snapshot) -> (Value, Value))
         REVISIONS.with_borrow_mut(|r| *r.entry(key).or_default() += 1);
     }
     changed
+}
+
+/// The layout shown, as mods read it with `layout()`.
+pub(crate) fn layout_snapshot() -> Value {
+    SNAPSHOT.with_borrow(|s| s.layout.clone())
 }
 
 pub fn publish_layout(layout: &Node) -> bool {
@@ -947,7 +963,7 @@ fn run_remote_with_limit(machine: &str, command: &str, args: &[String], cwd: Opt
 }
 
 /// The agents a machine can start (`knownAgents()`), asked at most once a minute.
-fn known_agents(on: Option<String>, list: Vec<Value>) -> Result<Value, String> {
+pub(crate) fn known_agents(on: Option<String>, list: Vec<Value>) -> Result<Value, String> {
     type InstalledCache = std::collections::HashMap<Option<String>, (std::time::Instant, Vec<String>, Vec<String>)>;
     static SEEN: std::sync::Mutex<Option<InstalledCache>> = std::sync::Mutex::new(None);
     let commands: Vec<String> = list.iter().filter_map(|a| a["run"][0].as_str().map(str::to_owned)).collect();
@@ -971,7 +987,7 @@ fn known_agents(on: Option<String>, list: Vec<Value>) -> Result<Value, String> {
 }
 
 /// A text file on another machine: `cat`, or `type` where there is none (Windows).
-fn read_remote(machine: &str, path: &str) -> Result<Option<String>, String> {
+pub(crate) fn read_remote(machine: &str, path: &str) -> Result<Option<String>, String> {
     let (code, out, _) = match run_remote(machine, "cat", &["--".into(), path.into()], None) {
         Err(e) if e.contains("cannot start") => run_remote(machine, "cmd", &["/d".into(), "/c".into(), "type".into(), path.replace('/', "\\")], None)?,
         r => r?,
@@ -1640,6 +1656,21 @@ mod tests {
         AGENT_ORDER.with(|s| *s.borrow_mut() = vec!["t2".into(), "t1".into(), "t3".into()]);
         assert_eq!(agent_order(available()), vec!["t2", "t1", "t3"]);
         AGENT_ORDER.with(|s| s.borrow_mut().clear());
+    }
+
+    #[test]
+    fn a_regenerated_editor_helper_recorded_by_an_older_build_is_not_an_edit() {
+        let dir = std::env::temp_dir().join(format!("herdr-app-helper-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("main.js"), "a").unwrap();
+        // An older build embedded this helper; gpui-shell has since rewritten it with other content.
+        std::fs::write(dir.join("gpui-kit.d.ts"), "regenerated").unwrap();
+        let files: Files = [("main.js".to_owned(), fingerprint(b"a")), ("gpui-kit.d.ts".to_owned(), fingerprint(b"as embedded"))].into();
+        assert!(as_shipped(&dir, &files));
+        std::fs::write(dir.join("main.js"), "edited").unwrap();
+        assert!(!as_shipped(&dir, &files));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

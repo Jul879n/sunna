@@ -14,17 +14,21 @@ function harness(replies: unknown[] = [], storage = new Map<string, string>(), s
   const availability = [{ name: null as string | null, layout: "ready" }];
   const moves: { id: string; index: number }[] = [];
   const handlers: Record<string, (...args: any[]) => void> = {};
-  const env = { layout: null as unknown, agents: [] as any[], shared: {} as Record<string, unknown>, stored: [] as [string, unknown][] };
+  const env = { layout: null as unknown, agents: [] as any[], shared: {} as Record<string, unknown>, stored: [] as [string, unknown][], overlays: [] as any[], runWhen: false };
+  const clicks: ((...args: any[]) => void)[] = [];
   // The list's scroll position: the requests the view makes are what the sidebar would scroll by.
   const ScrollHandle = { new: () => ({ calls: [] as number[], scroll_to_item(index: number) { this.calls.push(index); } }) };
   const theme = () => new Proxy({}, { get: () => "#000000" });
   const tracked: unknown[] = [];
   const element: any = new Proxy({}, { get: (_, method) => (...args: any[]) => {
     if (String(method).startsWith("on_")) handlers[String(method)] = args.at(-1);
+    if (method === "on_click") clicks.push(args.at(-1));
+    // Off by default: a test turns it on to build what `.when(...)` guards.
+    if (method === "when" && env.runWhen && args[0]) args[1](element);
     if (method === "track_scroll") tracked.push(args[0]);
     return element;
   } });
-  const Spaces = new Function("View", "hc", "localStorage", "spaces", "panes", "run", "v_flex", "h_flex", "div", "svg", "shared", "machines", "exec", "window", "watchFolder", "ScrollHandle", "theme", "layout", "setShared", "tr", "style", "image", "agents", "appHome", "readTextFile", "readdir", "setAgentOrder", `${source}; return Spaces;`)(
+  const Spaces = new Function("View", "hc", "localStorage", "spaces", "panes", "run", "v_flex", "h_flex", "div", "svg", "shared", "machines", "exec", "window", "watchFolder", "ScrollHandle", "theme", "layout", "setShared", "tr", "style", "image", "agents", "appHome", "readTextFile", "readdir", "setAgentOrder", "openOverlay", `${source}; return Object.assign(Spaces, { gitFacts, rowHeight });`)(
     class {},
     async (args: string[]) => {
       calls.push(args);
@@ -40,14 +44,14 @@ function harness(replies: unknown[] = [], storage = new Map<string, string>(), s
     },
     ...Array(4).fill(() => element), (key: string) => env.shared[key] ?? null, () => availability, execGit, () => ({ active: true }), watch,
     ScrollHandle, theme, () => env.layout, (key: string, value: unknown) => { env.stored.push([key, value]); env.shared[key] = value; }, tr, () => ({ radius: 6 }),
-    () => element, () => env.agents, () => "/home", async () => null, async () => [], () => null,
+    () => element, () => env.agents, () => "/home", async () => null, async () => [], () => null, (overlay: unknown) => env.overlays.push(overlay),
   );
   const view = new Spaces();
   view.reconnecting = {};
   view.folded = new Set(["cloud"]);
   view.refreshMachines = () => {};
   const cx = { timer: { every() {} }, notify() {}, spawn(fn: (cx: unknown) => Promise<unknown>) { tasks.push(fn(cx)); } };
-  return { view, calls, tasks, cx, storage, moves, handlers, snapshot, availability, env, tracked };
+  return { view, calls, tasks, cx, storage, moves, handlers, snapshot, availability, env, tracked, clicks };
 }
 
 test("git grouping reads refs for normal, detached, unborn and bare worktrees", async () => {
@@ -481,22 +485,22 @@ const spaceList = (ids: string[], active: string, remote: string[] = []): Space[
 test("the active space is brought into view once, and left alone while it stays put", () => {
   const h = withHandle(scrollHarness(spaceList(["a", "b", "c", "d"], "c")));
   h.view.render();
-  expect(h.view.scroll.calls).toEqual([5]); // each space sits under a project header
+  expect(h.view.scroll.calls).toEqual([7]); // each space sits under a project header, and a divider separates the projects
   expect(h.tracked).toEqual([h.view.scroll]); // the list is the area that handle scrolls
   h.view.render();
   h.view.render();
-  expect(h.view.scroll.calls).toEqual([5]);
+  expect(h.view.scroll.calls).toEqual([7]);
   h.snapshot.forEach(s => { s.active = s.id === "a"; });
   h.view.render();
-  expect(h.view.scroll.calls).toEqual([5, 1]);
+  expect(h.view.scroll.calls).toEqual([7, 1]);
 });
 
 test("the active space's place counts a remote machine's header and rows", () => {
   const ids = ["a", "b", "r1", "r2"];
   const h = withHandle(scrollHarness(spaceList(ids, "r2", ["r1", "r2"])));
   h.view.render();
-  // children: this computer's header, then per space a project header and its row (a, b), cloud's header, r1, r2
-  expect(h.view.scroll.calls).toEqual([9]);
+  // children: this computer's header, then per space a project header and its row (a, b) with a divider between projects, cloud's header, r1, r2 likewise
+  expect(h.view.scroll.calls).toEqual([11]);
 });
 
 test("a folded machine's active space has no row to reveal", () => {
@@ -510,8 +514,8 @@ test("the narrow rail reveals the same child", () => {
   const h = withHandle(scrollHarness(spaceList(["a", "b", "c"], "c")));
   h.env.layout = { id: "sidebar", size: { px: 100 } };
   h.view.render();
-  // Each space is its own project here: a tile and a cell per space, so c's cell is the sixth child.
-  expect(h.view.scroll.calls).toEqual([5]);
+  // Each space is its own project here: a tile and a cell per space, a divider between projects, so c's cell is the eighth child.
+  expect(h.view.scroll.calls).toEqual([7]);
 });
 
 test("the list reveals the active space again when its own size changes, and only then", () => {
@@ -519,12 +523,12 @@ test("the list reveals the active space again when its own size changes, and onl
   let notified = 0;
   h.cx.notify = () => { notified++; };
   h.view.render();
-  expect(h.view.scroll.calls).toEqual([7]);
+  expect(h.view.scroll.calls).toEqual([10]);
   h.handlers.on_size_change({ width: 200, height: 60 }, h.cx);
-  expect(h.view.scroll.calls).toEqual([7, 7]);
+  expect(h.view.scroll.calls).toEqual([10, 10]);
   expect(notified).toBe(1);
   h.view.render();
-  expect(h.view.scroll.calls).toEqual([7, 7]);
+  expect(h.view.scroll.calls).toEqual([10, 10]);
 });
 
 test("a size change with no active row drawn asks for nothing", () => {
@@ -538,15 +542,15 @@ test("a size change with no active row drawn asks for nothing", () => {
 test("the list reveals the active space again when a machine header shifts its place", () => {
   const h = withHandle(scrollHarness(spaceList(["a", "b", "c", "d"], "b")));
   h.view.render();
-  expect(h.view.scroll.calls).toEqual([3]);
+  expect(h.view.scroll.calls).toEqual([4]);
   // A machine joins: its header and rows come after this computer's, and now this computer gets a header too,
   // so the same active space sits one child further down.
   h.snapshot.push({ id: "r1", folder: "/r1", machine: "cloud", active: false });
   h.view.shown.add("r1");
   h.view.render();
-  expect(h.view.scroll.calls).toEqual([3, 4]);
+  expect(h.view.scroll.calls).toEqual([4, 5]);
   h.view.render();
-  expect(h.view.scroll.calls).toEqual([3, 4]);
+  expect(h.view.scroll.calls).toEqual([4, 5]);
 });
 
 test("a space with agents draws its row with its agents under it, in a project", () => {
@@ -562,8 +566,8 @@ test("a space with agents draws its row with its agents under it, in a project",
   // Spaces of one repo share a project header; another repo gets its own. The active space's index counts the headers.
   const mk = (id, repo, active = false) => ({ w: { id, name: id, folder: `/x/${repo}`, active, tabs: [] }, i: 0, g: { repo, name: repo }, tree: null });
   const out = h.view.projects([mk("a", "r1"), mk("b", "r1"), mk("c", "r2", true)], t, false, () => null);
-  expect(out.items).toHaveLength(5);
-  expect(out.active).toBe(4);
+  expect(out.items).toHaveLength(6);
+  expect(out.active).toBe(5);
   // The rail puts a project tile before its spaces, so the active cell is the second.
   expect(h.view.projects([mk("a", "r1", true)], t, true, () => "x").active).toBe(1);
 });
@@ -573,14 +577,14 @@ test("a hidden project leaves the list but never the one with the active space, 
   const t = new Proxy({}, { get: () => "#000000" });
   const mk = (id: string, repo: string, active = false) => ({ w: { id, name: id, folder: `/x/${repo}`, active, tabs: [] }, i: 0, g: { repo, name: repo }, tree: null });
   const rows = [mk("a", "r1"), mk("b", "r2")];
-  expect(h.view.projects(rows, t, false, () => null).items).toHaveLength(4);
+  expect(h.view.projects(rows, t, false, () => null).items).toHaveLength(5); // two projects and a divider between them
   h.env.shared["space.hidden"] = ["r1"];
-  // r2 stays (2 items) and the hidden section adds its toggle (collapsed).
-  expect(h.view.projects(rows, t, false, () => null).items).toHaveLength(3);
-  h.view.hiddenOpen = true;
+  // r2 stays (2 items) and the hidden section adds its divider and toggle (collapsed).
   expect(h.view.projects(rows, t, false, () => null).items).toHaveLength(4);
+  h.view.hiddenOpen = true;
+  expect(h.view.projects(rows, t, false, () => null).items).toHaveLength(5);
   // The project holding the active space is not hidden.
-  expect(h.view.projects([mk("a", "r1", true), mk("b", "r2")], t, false, () => null).items).toHaveLength(4);
+  expect(h.view.projects([mk("a", "r1", true), mk("b", "r2")], t, false, () => null).items).toHaveLength(5);
 });
 
 test("the rail shows a tile per project and leaves out hidden ones", () => {
@@ -588,7 +592,79 @@ test("the rail shows a tile per project and leaves out hidden ones", () => {
   const t = new Proxy({}, { get: () => "#000000" });
   const mk = (id: string, repo: string, active = false) => ({ w: { id, name: id, folder: `/x/${repo}`, active, tabs: [] }, i: 0, g: { repo, name: repo }, tree: null });
   const rows = [mk("a", "r1"), mk("b", "r1"), mk("c", "r2")];
-  expect(h.view.projects(rows, t, true, () => "cell").items).toHaveLength(5);
+  expect(h.view.projects(rows, t, true, () => "cell").items).toHaveLength(6); // plus a divider between the two projects
   h.env.shared["space.hidden"] = ["r1"];
   expect(h.view.projects(rows, t, true, () => "cell").items).toHaveLength(2);
+});
+
+test("a folded project keeps its header and drops its spaces, and unfolds again", () => {
+  const h = harness();
+  const t = new Proxy({}, { get: () => "#000000" });
+  const mk = (id: string, repo: string, active = false) => ({ w: { id, name: id, folder: `/x/${repo}`, active, tabs: [] }, i: 0, g: { repo, name: repo }, tree: null });
+  const rows = [mk("a", "r1"), mk("b", "r1"), mk("c", "r2", true)];
+  const open = h.view.projects(rows, t, false, () => null);
+  expect(open.items).toHaveLength(6); // r1 header + 2 spaces, divider, r2 header + 1 space
+  h.env.shared["space.folded"] = ["r1"];
+  const folded = h.view.projects(rows, t, false, () => null);
+  expect(folded.items).toHaveLength(4); // r1 header, divider, r2 header + its space
+  expect(folded.active).toBe(3);
+  h.env.shared["space.folded"] = ["r2"];
+  const activeFolded = h.view.projects(rows, t, false, () => null);
+  expect(activeFolded.items).toHaveLength(5);
+  expect(activeFolded.active).toBe(-1); // the active space has no row to reveal
+});
+
+test("clicking a project header folds and unfolds it, and its worktree button does not", () => {
+  const h = harness();
+  const t = new Proxy({}, { get: () => "#000000" });
+  const mk = (id: string, repo: string, active = false) => ({ w: { id, name: id, folder: `/x/${repo}`, active, tabs: [] }, i: 0, g: { repo, name: repo }, tree: null });
+  const rows = [mk("a", "r1"), mk("b", "r2")];
+  h.env.runWhen = true;
+  h.view.projects(rows, t, false, () => null);
+  // Per project: the header's click, then its worktree button's.
+  const [fold, worktree] = h.clicks;
+  fold();
+  expect(h.env.shared["space.folded"]).toEqual(["r1"]);
+  h.clicks.length = 0;
+  h.view.projects(rows, t, false, () => null);
+  h.clicks[0]();
+  expect(h.env.shared["space.folded"]).toEqual([]); // the second click unfolds it
+  let stopped = 0;
+  worktree({}, { stop_propagation: () => { stopped++; } });
+  expect(stopped).toBe(1); // the button's click never reaches the header
+  expect(h.env.overlays).toHaveLength(1);
+  expect(h.env.overlays[0]).toMatchObject({ mod: "worktree", props: { action: "new", folder: "/x/r1" } });
+  expect(h.env.shared["space.folded"]).toEqual([]);
+});
+
+test("a place's git facts get a second line only when they say more than its name", () => {
+  const h = harness();
+  const { gitFacts, rowHeight } = h.view.constructor as any;
+  const w = { id: "a", name: "api" };
+  expect(gitFacts(w, null)).toBeNull();
+  expect(gitFacts(w, { branch: "api", ahead: 0, behind: 0, dirty: false })).toBeNull();
+  expect(rowHeight({ w, g: { branch: "api", ahead: 0, behind: 0, dirty: false } })).toBe(30);
+  expect(gitFacts(w, { branch: "feat/x", ahead: 0, behind: 0 })).toEqual({ branch: "feat/x", ahead: 0, behind: 0, dirty: false });
+  expect(gitFacts(w, { branch: "api", ahead: 2, behind: NaN, dirty: false })).toEqual({ branch: null, ahead: 2, behind: 0, dirty: false });
+  expect(gitFacts(w, { branch: "api", ahead: 0, behind: 3, dirty: true })).toEqual({ branch: null, ahead: 0, behind: 3, dirty: true });
+  expect(rowHeight({ w, g: { branch: "feat/x", ahead: 0, behind: 0 } })).toBe(40);
+  expect(rowHeight()).toBe(30);
+});
+
+test("a place is dirty when git status lists anything, and stays clean when it fails", async () => {
+  const run = async (status: { code: number; stdout: string }) => {
+    const h = harness([], new Map(), [{ id: "main", folder: "/repo" }], async (_command: string, args: string[], { cwd }: { cwd: string }) => {
+      if (args.includes("status")) return { ...status, stderr: "" };
+      const stdout = args.includes("--show-toplevel") ? cwd + "\n" : args.includes("--git-common-dir") ? "/repo/.git\n" : args[0] === "symbolic-ref" ? "refs/heads/main\n" : "0 0\n";
+      return { code: 0, stdout, stderr: "" };
+    });
+    h.view.init({}, h.cx);
+    h.view.watch = () => {};
+    const key = JSON.stringify([null, "/repo"]);
+    await h.view.check(key, h.cx);
+    return h.view.git[key].dirty;
+  };
+  expect(await run({ code: 0, stdout: " M src/a.ts\n" })).toBe(true);
+  expect(await run({ code: 0, stdout: "" })).toBe(false);
+  expect(await run({ code: 128, stdout: "" })).toBe(false);
 });

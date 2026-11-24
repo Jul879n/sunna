@@ -10,7 +10,7 @@ export default class AwakeMenu extends View {
     return h_flex().id(id).h(31).px(9).gap(10).rounded(7).items_center().flex_none().text_color(t.foreground)
       .hover(s => s.bg(t.selected))
       .on_click(() => { closeOverlay(props().overlay); run("app.keep_awake", { mode: id }); })
-      .child(current ? svg("frame/settings/check.svg").size(14) : div().w(14))
+      .child(current ? svg("mods/workspace-chrome/check.svg").size(14) : div().w(14))
       .child(div().flex_1().child(label));
   }
   render() {

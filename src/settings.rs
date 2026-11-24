@@ -82,6 +82,8 @@ pub const PRESETS: &[&str] = &["graphite", "ink", "moss", "paper"];
 /// The theme a layout without one shows, by appearance.
 pub const DEFAULT_DARK: &str = "graphite";
 pub const DEFAULT_LIGHT: &str = "paper";
+/// Terminal contrast on light themes when the person set none: ANSI white is unreadable on them.
+pub const LIGHT_MINIMUM_CONTRAST: f32 = 1.6;
 
 fn preset(name: &str) -> Option<&'static Palette> {
     match name {
@@ -494,8 +496,22 @@ pub struct Person {
     /// A draggable scroll position thumb at a terminal pane's right edge.
     #[serde(skip_serializing_if = "is_true")]
     pub pane_scrollbars: bool,
+    /// Space between a terminal's edge and its text, px: [x, y]. Absent: the layout's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_padding: Option<[f32; 2]>,
+    /// 0..1: below 1, what's behind a terminal shows through. Absent: the layout's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_opacity: Option<f32>,
+    /// Typing in a terminal scrolls it back to the bottom.
+    #[serde(skip_serializing_if = "is_true")]
+    pub scroll_on_input: bool,
+    /// Which agent alerts show a toast and play their sound.
+    #[serde(skip_serializing_if = "Notifications::is_default")]
+    pub notifications: Notifications,
     /// Minimum terminal text contrast ratio; 1 leaves program colors unchanged.
-    pub minimum_contrast: f32,
+    /// Unset: off on dark themes, `LIGHT_MINIMUM_CONTRAST` on light ones, where white text would vanish.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub minimum_contrast: Option<f32>,
     /// macOS Option sends Alt shortcuts, or follows the keyboard layout.
     #[serde(skip_serializing_if = "OptionAsAlt::is_auto")]
     pub option_as_alt: OptionAsAlt,
@@ -566,7 +582,11 @@ impl Default for Person {
             clipboard_write: true,
             copy_on_select: true,
             pane_scrollbars: true,
-            minimum_contrast: 1.0,
+            terminal_padding: None,
+            terminal_opacity: None,
+            scroll_on_input: true,
+            notifications: Notifications::default(),
+            minimum_contrast: None,
             option_as_alt: OptionAsAlt::Auto,
             appearance: Appearance::System,
             theme: None,
@@ -610,6 +630,8 @@ pub struct Settings {
     pub terminal_padding: [f32; 2],
     /// 0..1: below 1, what's behind a terminal shows through.
     pub terminal_opacity: f32,
+    pub scroll_on_input: bool,
+    pub notifications: Notifications,
     pub clipboard_write: bool,
     pub copy_on_select: bool,
     pub minimum_contrast: f32,
@@ -661,6 +683,33 @@ pub struct Sounds {
     pub blocked: Option<String>,
 }
 
+/// Which agent alerts reach the person: `enabled` is the master switch for toasts;
+/// `done` / `blocked` turn one kind off entirely (toast and sound).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Notifications {
+    pub enabled: bool,
+    pub done: bool,
+    pub blocked: bool,
+}
+
+impl Default for Notifications {
+    fn default() -> Self {
+        Notifications { enabled: true, done: true, blocked: true }
+    }
+}
+
+impl Notifications {
+    pub fn is_default(&self) -> bool {
+        *self == Notifications::default()
+    }
+
+    /// Whether an alert of this kind is raised at all (sound and toast).
+    pub fn wants(&self, blocked: bool) -> bool {
+        if blocked { self.blocked } else { self.done }
+    }
+}
+
 impl Default for Sounds {
     fn default() -> Self {
         Sounds { enabled: true, done: None, blocked: None }
@@ -688,6 +737,8 @@ impl Default for Settings {
             pane_scrollbars: true,
             terminal_padding: [10.0, 6.0],
             terminal_opacity: 1.0,
+            scroll_on_input: true,
+            notifications: Notifications::default(),
             clipboard_write: true,
             copy_on_select: true,
             minimum_contrast: 1.0,
@@ -733,8 +784,11 @@ impl Settings {
             dark,
             colors,
             pane_scrollbars: person.pane_scrollbars,
-            terminal_padding: look.terminal_padding.unwrap_or(d.terminal_padding),
-            terminal_opacity: look.terminal_opacity.unwrap_or(1.0).clamp(0.0, 1.0),
+            // Unlike fonts, these two are set from Settings > Terminal on purpose: the person's own wins over the layout's.
+            terminal_padding: person.terminal_padding.or(look.terminal_padding).unwrap_or(d.terminal_padding).map(|v| v.clamp(0.0, 64.0)),
+            terminal_opacity: person.terminal_opacity.or(look.terminal_opacity).unwrap_or(1.0).clamp(0.0, 1.0),
+            scroll_on_input: person.scroll_on_input,
+            notifications: person.notifications.clone(),
             sounds: person.sounds.clone(),
             language: crate::i18n::resolve(person.language.as_deref()).into(),
             keep_awake: person.keep_awake,
@@ -742,7 +796,7 @@ impl Settings {
             yolo: person.yolo.clone(),
             clipboard_write: person.clipboard_write,
             copy_on_select: person.copy_on_select,
-            minimum_contrast: person.minimum_contrast,
+            minimum_contrast: person.minimum_contrast.unwrap_or(if dark { 1.0 } else { LIGHT_MINIMUM_CONTRAST }),
             option_as_alt: person.option_as_alt,
         }
     }
@@ -1115,6 +1169,21 @@ mod tests {
     }
 
     #[test]
+    fn person_terminal_padding_opacity_and_alerts_override_and_default_on() {
+        let default: Person = serde_json::from_str("{}").unwrap();
+        let look: crate::layout::Look = serde_json::from_str(r#"{"terminal_padding":[14,12],"terminal_opacity":0.5}"#).unwrap();
+        let s = Settings::compose(&default, &look, true);
+        assert_eq!((s.terminal_padding, s.terminal_opacity, s.scroll_on_input, s.notifications.clone()), ([14.0, 12.0], 0.5, true, Notifications::default()));
+        let person: Person = serde_json::from_str(r#"{"terminal_padding":[2,200],"terminal_opacity":0.8,"scroll_on_input":false,"notifications":{"done":false}}"#).unwrap();
+        let s = Settings::compose(&person, &look, true);
+        assert_eq!((s.terminal_padding, s.terminal_opacity, s.scroll_on_input), ([2.0, 64.0], 0.8, false));
+        assert!(s.notifications.enabled && s.notifications.wants(true) && !s.notifications.wants(false));
+        let back: Person = serde_json::from_value(serde_json::to_value(&person).unwrap()).unwrap();
+        assert_eq!(back, person);
+        assert_eq!(serde_json::to_value(&default).unwrap().get("notifications"), None);
+    }
+
+    #[test]
     fn terminal_cell_width_defaults_inherits_overrides_and_clamps() {
         let default: Person = serde_json::from_str("{}").unwrap();
         let none = crate::layout::Look::default();
@@ -1185,10 +1254,15 @@ mod tests {
     #[test]
     fn minimum_contrast_defaults_off_and_validates_the_ratio() {
         let default: Person = serde_json::from_str("{}").unwrap();
-        assert_eq!(default.minimum_contrast, 1.0);
+        assert_eq!(default.minimum_contrast, None);
         assert_eq!(Settings::default().minimum_contrast, 1.0);
+        // Unset: off on a dark theme, the light default on a light one.
+        assert_eq!(Settings::compose(&default, &crate::layout::Look::default(), true).minimum_contrast, 1.0);
+        assert_eq!(Settings::compose(&default, &crate::layout::Look::default(), false).minimum_contrast, LIGHT_MINIMUM_CONTRAST);
         for ratio in [1.0, 1.6, 21.0, 0.0, 21.1] {
             let person: Person = serde_json::from_value(serde_json::json!({"minimum_contrast": ratio})).unwrap();
+            // A value the person wrote wins on both, including 1 (off).
+            assert_eq!(Settings::compose(&person, &crate::layout::Look::default(), false).minimum_contrast, ratio);
             let settings = Settings::compose(&person, &crate::layout::Look::default(), true);
             assert_eq!(settings.minimum_contrast, ratio);
             assert_eq!(serde_json::to_value(person).unwrap()["minimum_contrast"], serde_json::json!(ratio));
@@ -1240,7 +1314,7 @@ mod tests {
     /// settings.json key.
     #[test]
     fn the_guide_explains_every_setting() {
-        let all = Person { language: Some(String::new()), keep_awake: crate::awake::Mode::On, resume_agents: false, yolo: Yolo { enabled: false, ..Yolo::default() }, core: Some(String::new()), font: Some(String::new()), font_size: Some(1.0), font_weight: Some(400), ui_font: Some(String::new()), telemetry: false, clipboard_write: false, copy_on_select: false, appearance: Appearance::Light, theme: Some(crate::layout::ThemeChoice::One(String::new())), colors: [("text".into(), String::new())].into(), ..Person::default() };
+        let all = Person { language: Some(String::new()), keep_awake: crate::awake::Mode::On, resume_agents: false, yolo: Yolo { enabled: false, ..Yolo::default() }, core: Some(String::new()), font: Some(String::new()), font_size: Some(1.0), font_weight: Some(400), ui_font: Some(String::new()), telemetry: false, clipboard_write: false, copy_on_select: false, terminal_padding: Some([1.0, 1.0]), terminal_opacity: Some(1.0), scroll_on_input: false, notifications: Notifications { enabled: false, ..Notifications::default() }, appearance: Appearance::Light, theme: Some(crate::layout::ThemeChoice::One(String::new())), colors: [("text".into(), String::new())].into(), ..Person::default() };
         let keys: Vec<String> = serde_json::to_value(&all).unwrap().as_object().unwrap().keys().cloned().collect();
         let guide = include_str!("../defaults/AGENTS.md");
         let section = guide.split("## The person").nth(1).and_then(|s| s.split("\n## ").next()).unwrap_or_default();
