@@ -1,14 +1,13 @@
 //! Send feedback, native: the form of `app.feedback {message?, from?}` in the dialog every window uses. The
 //! person writes a message (up to 4000 characters), may add up to 3 screenshots (paste, pick or drop) and an
-//! email, and sees the exact JSON that will be sent. Nothing leaves until Send; a build without an endpoint
-//! says so and cannot send. The data is `crate::feedback` as before.
+//! email, and sees the exact JSON that will be sent. Nothing leaves until Send; //! says so and cannot send. The data is `crate::feedback` as before.
 
 use super::dialog::{self, Act, Dialog};
 use super::native::{icon, outline, tone, z};
 use super::*;
 use crate::feedback;
 use crate::i18n;
-use gpui_base::input::{InputEvent, InputState, Textarea, TextareaState};
+use gpui_base::input::{InputEvent, Textarea, TextareaState};
 
 /// Overlay id: opening it again replaces it.
 pub(super) const ID: &str = "feedback";
@@ -24,7 +23,6 @@ pub(super) fn can_send(message: &str, available: bool, sending: bool) -> bool {
 pub(super) struct FeedbackView {
     app: WeakEntity<AppWindow>,
     message: Entity<TextareaState>,
-    email: Entity<InputState>,
     focus: dialog::Focus,
     from: String,
     layout: String,
@@ -50,14 +48,8 @@ impl FeedbackView {
             _ => {}
         })
         .detach();
-        let email = dialog::input("", &i18n::t("feedback.email_optional"), window, cx, |this: &mut Self, ev, _, cx| {
-            if matches!(ev, InputEvent::Change) {
-                this.error = None;
-                cx.notify();
-            }
-        });
         area.update(cx, |s, cx| s.focus(window, cx));
-        Self { app, message: area, email, focus: dialog::Focus::new(cx), from, layout, shots: Vec::new(), error: None, sending: false, sent: false }
+        Self { app, message: area, focus: dialog::Focus::new(cx), from, layout, shots: Vec::new(), error: None, sending: false, sent: false }
     }
 
     fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -118,7 +110,7 @@ impl FeedbackView {
     }
 
     fn body(&self, cx: &App) -> Value {
-        feedback::draft(&self.message.read(cx).value(), &self.email.read(cx).value(), self.shots.len(), &self.from, &self.layout)
+        feedback::draft(&self.message.read(cx).value(), "", self.shots.len(), &self.from, &self.layout)
     }
 
     fn send(&mut self, cx: &mut Context<Self>) {
@@ -217,7 +209,6 @@ impl Render for FeedbackView {
                 .flex()
                 .flex_col()
                 .gap(z(10.0))
-                .when(!available, |d| d.child(dialog::message(i18n::t("feedback.this_build_was_made_from"), true)))
                 .when(self.from == "agent", |d| d.child(dialog::message(i18n::t("feedback.drafted_by_an_agent_read"), false)))
                 .child(dialog::label(i18n::t("feedback.your_message_up_to_4000")))
                 .child(
@@ -228,7 +219,6 @@ impl Render for FeedbackView {
                         .child(div().flex_1().h_full().child(Textarea::new(&self.message))),
                 )
                 .child(self.thumbs(cx))
-                .child(dialog::field(i18n::t("feedback.email_only_if_you_want"), &self.email, false, window, cx))
                 .child(dialog::label(i18n::t("feedback.what_we_send_exactly_this")))
                 .child(
                     div()
@@ -247,7 +237,7 @@ impl Render for FeedbackView {
                 )
                 .when_some(self.error.clone(), |d, e| d.child(dialog::message(e, true)))
         };
-        let mut card = Dialog::new(i18n::t("feedback.send_feedback"), &self.focus, close).width(WIDTH).fields(2).body(body);
+        let mut card = Dialog::new(i18n::t("feedback.send_feedback"), &self.focus, close).width(WIDTH).fields(1).body(body);
         card = if self.sent {
             card.no_cancel().action(Act::primary(i18n::t("feedback.done"), dialog::run(&this, |v, w, cx| v.close(w, cx))))
         } else {

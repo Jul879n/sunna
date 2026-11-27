@@ -4,9 +4,12 @@
 // UI handlers take many arguments, GPUI/VT types are deeply nested, and the VT bridge transmutes C callbacks.
 #![allow(clippy::too_many_arguments, clippy::type_complexity, clippy::large_enum_variant, clippy::missing_transmute_annotations)]
 
+mod agent_hooks;
 mod awake;
 mod badge;
 mod bench;
+mod envx;
+mod labels;
 mod commands;
 mod control;
 mod editor;
@@ -60,12 +63,12 @@ Usage:
   sunna feedback <text>        draft feedback for the person to review and send
   sunna commands               every command, its arguments, what it does
   sunna status                 what the window shows, and any errors
-  sunna shot [file.png]        save the current window frame (default: herdr-shot.png)
+  sunna shot [file.png]        save the current window frame (default: sunna-shot.png)
   sunna check <mod folder>     load a mod once and report what's wrong
   sunna --skill                Agent Skill: driving the window, and where hc fits
   sunna --version
 
-The terminals run in herdr-core (`hc`), which keeps them alive when the
+The terminals run in Sunna Core (`hc`), which keeps them alive when the
 window closes. `hc --help`: start, read, wait on and talk to terminals and
 agents. The app shows them and arranges them in spaces and tabs.
 
@@ -92,7 +95,7 @@ fn attach_console() {
 }
 
 fn main() {
-    // Sunna keeps its terminals, spaces and layouts in its own herdr-core session, apart from
+    // Sunna keeps its terminals, spaces and layouts in its own Sunna Core session, apart from
     // Herdr's (one shared core would show each app the other's spaces). `HC_SESSION` set by the
     // person wins. Still single-threaded here, which `set_var` needs.
     if std::env::var_os("HC_SESSION").is_none() {
@@ -105,7 +108,7 @@ fn main() {
     if args.len() > 1 {
         attach_console();
     }
-    // `sunna check <mod>` / `sunna types <mod>`: gpui-shell's own checker, with Herdr's module installed.
+    // `sunna check <mod>` / `sunna types <mod>`: gpui-shell's own checker, with Sunna's module installed.
     if matches!(args.get(1).map(String::as_str), Some("check" | "types")) {
         mods::install_check_policy();
         gpui_shell::host::main_with_components(gpui_shell::FrozenComponentRegistry::default());
@@ -132,7 +135,7 @@ fn main() {
     core_bin::fill_path();
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_env("HERDR_APP_LOG")
+            tracing_subscriber::EnvFilter::try_from_env(if std::env::var_os("SUNNA_APP_LOG").is_some() { "SUNNA_APP_LOG" } else { "HERDR_APP_LOG" })
                 .unwrap_or_else(|_| "warn,herdr_app=info,gpui_shell=info".into()),
         )
         .init();
@@ -245,10 +248,10 @@ pub fn open_main(core: std::sync::Arc<hc::Core>, requests: async_channel::Receiv
                 // it to 20x20; turning it on later (a "system" layout) is fine.
                 window_decorations: Some(WindowDecorations::Client),
                 // Herdr Dev and other side-by-side builds get their own dock icon.
-                app_id: Some(std::env::var("HERDR_APP_ID").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "sunna".into())),
+                app_id: Some(crate::envx::var("APP_ID").filter(|s| !s.is_empty()).unwrap_or_else(|| "sunna".into())),
                 ..Default::default()
             };
             cx.open_window(options, |window, cx| cx.new(|cx| window::AppWindow::new(core, requests, window, cx)))
-                .expect("cannot open the Herdr window");
+                .expect("cannot open the Sunna window");
             cx.activate(true);
 }

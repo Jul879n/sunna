@@ -66,7 +66,7 @@ impl EventLines {
     }
 
     fn note_seen(&mut self, address: &Value, labels: &Value) {
-        let (Some(address), Some(seen)) = (address.as_str(), labels["herdr.seen"].as_str().and_then(|s| s.parse::<u64>().ok())) else { return };
+        let (Some(address), Some(seen)) = (address.as_str(), crate::labels::get(labels, "seen").and_then(Value::as_str).and_then(|s| s.parse::<u64>().ok())) else { return };
         let high = self.seen.entry(address.to_owned()).or_default();
         *high = (*high).max(seen);
     }

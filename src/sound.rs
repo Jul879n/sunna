@@ -28,7 +28,7 @@ const PLAYER_LIMIT: Duration = Duration::from_secs(15);
 
 /// `done`, `blocked`, or a file (absolute, or relative to ~/.config/sunna). Off the UI thread.
 pub fn play(sound: &str) {
-    if std::env::var_os("HERDR_APP_NO_SOUND").is_some() {
+    if crate::envx::var_os("APP_NO_SOUND").is_some() {
         return;
     }
     let sound = sound.to_owned();

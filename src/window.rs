@@ -1736,7 +1736,7 @@ impl AppWindow {
             self.written_seen.insert(addr.clone(), turn);
             let core = self.core.clone();
             cx.spawn(async move |this, cx| {
-                let params = json!({ "terminal": addr, "labels": { "herdr.seen": turn.to_string() } });
+                let params = json!({ "terminal": addr, "labels": { "sunna.seen": turn.to_string() } });
                 let Err(e) = cx.background_executor().spawn(async move { core.call("terminal.label", params) }).await else { return };
                 tracing::warn!("seen label for {addr}: {e:#}");
                 let _ = this.update(cx, |this, _| {
@@ -1984,7 +1984,7 @@ impl AppWindow {
                         "tab": ctx.id, "tab_index": ci + 1, "tab_name": Model::tab_name(pr, ctx),
                         "status": status, "app": a.and_then(|a| a.app.clone()), "program": self.program(addr), "title": title.unwrap_or_default(),
                         "seq": a.map(|a| a.seq).unwrap_or(0),
-                        "pinned": self.live.get(addr).and_then(|r| r.pointer("/labels/herdr.pinned")).and_then(Value::as_str).is_some_and(|v| !v.is_empty()),
+                        "pinned": self.live.get(addr).and_then(|r| crate::labels::text(r, "pinned")).is_some_and(|v| !v.is_empty()),
                         "focused": m.active.as_deref() == Some(pr.id.as_str()) && focused_pane.as_deref() == Some(p.id.as_str()),
                     }));
                 }
@@ -2243,7 +2243,7 @@ impl AppWindow {
     /// What a terminal view takes from the core's facts: its folder, where right-clicks go.
     fn tell_term(&self, view: &Entity<TerminalView>, addr: &str, cx: &mut Context<Self>) {
         let cwd = self.cwds.get(addr).map(std::path::PathBuf::from);
-        let to_program = self.live.get(addr).and_then(|r| r.pointer("/labels/herdr.right-click")).and_then(Value::as_str) == Some("program");
+        let to_program = self.live.get(addr).and_then(|r| crate::labels::text(r, "right-click")) == Some("program");
         view.update(cx, |v, _| {
             v.cwd = cwd;
             v.right_click_to_program = to_program;
@@ -2301,7 +2301,7 @@ impl AppWindow {
             }
             changed |= self.model.set_word(addr, word, app, looking);
             let turn = rec.get("turn").and_then(Value::as_u64).unwrap_or(0);
-            let label = rec.pointer("/labels/herdr.seen").and_then(Value::as_str).and_then(|s| s.parse::<u64>().ok());
+            let label = crate::labels::text(rec, "seen").and_then(|s| s.parse::<u64>().ok());
             changed |= self.model.set_turn(addr, turn, label.max(self.written_seen.get(addr).copied()));
         }
         self.written_seen.retain(|a, _| self.live.contains_key(a));
@@ -2504,8 +2504,8 @@ impl AppWindow {
                 let machine = a.split_once('/').map(|(m, _)| m);
                 if !self.documents.get(machine.unwrap_or("")).is_some_and(|s| s.available) { return None; }
                 let labels = r.get("labels")?;
-                let space = labels.get("herdr.space")?.as_str().filter(|s| !s.is_empty())?;
-                let tab = labels.get("herdr.tab").and_then(Value::as_str).filter(|s| !s.is_empty());
+                let space = crate::labels::get(labels, "space")?.as_str().filter(|s| !s.is_empty())?;
+                let tab = crate::labels::get(labels, "tab").and_then(Value::as_str).filter(|s| !s.is_empty());
                 Some((a.clone(), crate::mirror::qualify(space, machine), tab.map(|t| crate::mirror::qualify(t, machine))))
             }).collect::<Vec<_>>();
         orphans.sort();
@@ -2720,7 +2720,7 @@ impl AppWindow {
             Some(slot) if slot.available => Ok(()),
             Some(slot) => Err(slot.error.clone().unwrap_or_else(|| "This machine's layout is unavailable. Try again when it reconnects.".into())),
             None => Err(match machine {
-                Some(m) => format!("Herdr has no machine called {m}. See hc machine ls; machines added with --temp stay out of Herdr."),
+                Some(m) => format!("Sunna has no machine called {m}. See hc machine ls; machines added with --temp stay out of Sunna."),
                 None => "This machine's layout is unavailable. Try again when it reconnects.".into(),
             }),
         }
@@ -2736,7 +2736,7 @@ impl AppWindow {
     fn spawn(&mut self, argv: Option<Vec<String>>, cwd: String, follow: bool, space: &str, ctx: &str, on: Option<&str>, size: Option<(u16, u16)>, window: &Window) -> Result<(String, String), String> {
         let argv = start_argv(argv, on, settings::get().shell.as_deref());
         self.require_document(on)?;
-        let labels = json!({ "herdr.space": crate::mirror::local(space, on), "herdr.tab": crate::mirror::local(ctx, on), "herdr.seen": "0" });
+        let labels = json!({ "sunna.space": crate::mirror::local(space, on), "sunna.tab": crate::mirror::local(ctx, on), "sunna.seen": "0" });
         let (addr, cwd) = run_following_folder(cwd, follow, on, |cwd| match self.core.run(argv.clone(), cwd.clone(), labels.clone(), on, size, crate::terminal::initial_display(window)) {
             // An agent on a machine without `sh` (Windows): in its PowerShell instead.
             Err(e) if on.is_some() && argv.first().map(String::as_str) == Some("sh") && format!("{e:#}").contains("not found") => {
@@ -2968,9 +2968,9 @@ impl AppWindow {
         let machine = address.split_once('/').map(|(m, _)| m);
         let (keep, labels) = match &change {
             TerminalChange::Keep { space, tab, .. } => (true, json!({
-                "herdr.space":crate::mirror::local(space, machine), "herdr.tab":crate::mirror::local(tab, machine),
+                "sunna.space":crate::mirror::local(space, machine), "sunna.tab":crate::mirror::local(tab, machine),
             })),
-            TerminalChange::Park => (false, json!({"herdr.space":"","herdr.tab":""})),
+            TerminalChange::Park => (false, json!({"sunna.space":"","sunna.tab":""})),
         };
         let (tx, rx) = std::sync::mpsc::channel();
         self.changing_terminals.insert(address.clone());
@@ -3049,7 +3049,7 @@ impl AppWindow {
             let parent = doomed[i].clone();
             for (addr, rec) in &self.live {
                 let child = rec.get("parent").and_then(Value::as_str) == Some(parent.as_str());
-                let kept = rec.get("labels").and_then(|l| l.get("herdr.space")).and_then(Value::as_str).is_some_and(|w| !w.is_empty());
+                let kept = crate::labels::text(rec, "space").is_some_and(|w| !w.is_empty());
                 if child && !kept && !doomed.contains(addr) {
                     doomed.push(addr.clone());
                 }
@@ -3540,7 +3540,7 @@ impl AppWindow {
                 let Some(t) = t.filter(|t| self.live.contains_key(t)) else { return self.fail("no such running terminal") };
                 // Off the UI thread: a terminal on a slow machine answers late.
                 let core = self.core.clone();
-                let params = json!({ "terminal": t, "labels": { "herdr.right-click": to } });
+                let params = json!({ "terminal": t, "labels": { "sunna.right-click": to } });
                 cx.background_executor()
                     .spawn(async move {
                         if let Err(e) = core.call("terminal.label", params) {
@@ -3556,7 +3556,7 @@ impl AppWindow {
                     return self.fail(format!("no running terminal {t:?}"));
                 }
                 let core = self.core.clone();
-                let params = json!({ "terminal": t, "labels": { "herdr.pinned": if pinned { "1" } else { "" } } });
+                let params = json!({ "terminal": t, "labels": { "sunna.pinned": if pinned { "1" } else { "" } } });
                 cx.background_executor()
                     .spawn(async move {
                         if let Err(e) = core.call("terminal.label", params) {
@@ -3695,7 +3695,7 @@ impl AppWindow {
                     Err(e) => return self.fail(format!("layout: {e}")),
                 };
                 if layout_sync::without_clicks(&self.chrome, &n) != self.chrome {
-                    return self.fail("Only supported click/look fields can change on Herdr's own layouts: clone one for other changes");
+                    return self.fail("Only supported click/look fields can change on Sunna's own layouts: clone one for other changes");
                 }
                 let mut state = layout_sync::State::between(&self.file_chrome, &n);
                 if n.look.theme == self.chrome.look.theme {
@@ -3780,7 +3780,7 @@ impl AppWindow {
             "layout.reset" => {
                 let name = Self::owned(a, "name").unwrap_or_else(|| self.layout_name.clone());
                 let Some((_, text)) = LAYOUTS.iter().find(|(n, _)| *n == name) else {
-                    return self.fail(format!("{name:?} isn't a layout Herdr ships"));
+                    return self.fail(format!("{name:?} isn't a layout Sunna ships"));
                 };
                 // Theirs is kept under a name nothing else has (never over an older one).
                 if layout_path(&name).exists()
@@ -4017,8 +4017,8 @@ impl AppWindow {
                     Ok(true) => {}
                     Ok(false) => return self.fail("no update is ready yet"),
                     Err(error) => {
-                        let reason = format!("Couldn't replace Herdr's files: {error}.");
-                        return self.fail(if cfg!(windows) { format!("Close Herdr's terminals (or restart Windows) and try again. {reason}") } else { reason });
+                        let reason = format!("Couldn't replace Sunna's files: {error}.");
+                        return self.fail(if cfg!(windows) { format!("Close Sunna's terminals (or restart Windows) and try again. {reason}") } else { reason });
                     }
                 }
                 self.drain_documents(window, cx);
@@ -5008,7 +5008,7 @@ impl AppWindow {
                 .text_xs()
                 .text_color(tone("blocked"))
                 .overflow_y_scroll()
-                .child(format!("{} did not load:\n\n{}\n\nFix the files; Herdr retries on save.", inst.name, error.as_deref().unwrap_or("?")))
+                .child(format!("{} did not load:\n\n{}\n\nFix the files; Sunna retries on save.", inst.name, error.as_deref().unwrap_or("?")))
                 .into_any_element(),
             None => div().into_any_element(),
         }
@@ -5742,8 +5742,8 @@ fn running_argv(rec: &serde_json::Map<String, Value>) -> Option<&Value> {
 /// it still runs. A listing taken just before it ended still shows it running,
 /// and labels outlive the program: putting it back would show a dead pane.
 fn adoptable(record: &Value, space: &str, tab: Option<&str>, machine: Option<&str>) -> bool {
-    let label = record.pointer("/labels/herdr.space").and_then(Value::as_str);
-    let labeled_tab = record.pointer("/labels/herdr.tab").and_then(Value::as_str).filter(|s| !s.is_empty());
+    let label = crate::labels::text(record, "space");
+    let labeled_tab = crate::labels::text(record, "tab").filter(|s| !s.is_empty());
     record["state"] == "live"
         && label == Some(crate::mirror::local(space, machine))
         && labeled_tab == tab.map(|t| crate::mirror::local(t, machine))

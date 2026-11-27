@@ -2860,9 +2860,9 @@ mod tests {
     #[test]
     fn marked_links_open_their_uri() {
         let mut vt = Vt::new(30, 2);
-        vt.write(b"see \x1b]8;;https://herdr.dev\x1b\\the docs\x1b]8;;\x1b\\ now");
+        vt.write(b"see \x1b]8;;https://github.com/Jul879n/sunna\x1b\\the docs\x1b]8;;\x1b\\ now");
         let hit = vt.link_at(6, 0, found).unwrap();
-        assert_eq!(hit.target, "https://herdr.dev");
+        assert_eq!(hit.target, "https://github.com/Jul879n/sunna");
         assert_eq!(hit.spans, vec![(0, 4, 11)]);
         assert_eq!(vt.link_at(13, 0, found), None);
     }

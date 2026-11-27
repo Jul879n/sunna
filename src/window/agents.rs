@@ -436,7 +436,7 @@ impl AppWindow {
                 keep.push(address.clone());
                 continue;
             };
-            if t["labels"]["herdr.pinned"].as_str().is_some_and(|v| !v.is_empty()) {
+            if crate::labels::text(t, "pinned").is_some_and(|v| !v.is_empty()) {
                 continue;
             }
             if with(|s| s.migrating.insert(address.clone())) {

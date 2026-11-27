@@ -14,6 +14,7 @@ use std::path::PathBuf;
 pub enum Tab {
     Installed,
     Explore,
+    Guide,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -74,10 +75,10 @@ pub struct State {
     iq_input: Entity<InputState>,
 }
 
-pub const KINDS: [(&str, &str); 3] = [("herdr-layout", "settings.mods_kind_layouts"), ("herdr-mod", "settings.mods_kind_mods"), ("herdr-theme", "settings.mods_kind_themes")];
+pub const KINDS: [(&str, &str); 3] = [("sunna-layout", "settings.mods_kind_layouts"), ("sunna-mod", "settings.mods_kind_mods"), ("sunna-theme", "settings.mods_kind_themes")];
 
 fn kind_key(kind: &str) -> &'static str {
-    KINDS.iter().find(|(k, _)| *k == kind).map_or("herdr-mod", |(k, _)| *k)
+    KINDS.iter().find(|(k, _)| *k == kind).map_or("sunna-mod", |(k, _)| *k)
 }
 
 impl State {
@@ -123,7 +124,7 @@ impl State {
             install_error: None,
             review: None,
             latest: HashMap::new(),
-            kind: "herdr-mod",
+            kind: "sunna-mod",
             found: HashMap::new(),
             found_loading: HashSet::new(),
             previews: HashMap::new(),
@@ -178,6 +179,32 @@ pub fn visible_in<'a>(list: &'a [Installed], filter: Filter, iq: &str, latest: &
 }
 
 /// A locale key shows translated; anything else is literal text.
+const GUIDE_EXAMPLE: &str = "import { View, div } from \"gpui-kit\";\nimport { props, run } from \"herdr\";\nexport default class Hello extends View {\n  render() {\n    return div().id(\"hello\").child(\"Hello\")\n      .on_click(() => run(\"app.check_updates\", {}));\n  }\n}";
+
+/// How to write a mod, in the app: where it lives, its files and where to read more.
+fn guide() -> Div {
+    let line = |k: &str| div().text_size(z(13.0)).line_height(z(19.0)).text_color(tone("muted")).child(i18n::t(k));
+    let head = |k: &str| div().pt(z(6.0)).text_size(z(14.0)).text_color(tone("foreground")).child(i18n::t(k));
+    let code = |t: &str| {
+        div().w_full().p(z(10.0)).rounded(z(8.0)).border_1().border_color(super::super::native::outline()).bg(c("background")).text_size(z(12.0)).line_height(z(17.0)).text_color(tone("muted"))
+            .children(t.lines().map(|l| div().child(l.replace(' ', "\u{a0}")).into_any_element()).collect::<Vec<_>>())
+    };
+    div().w_full().flex().flex_col().gap(z(8.0))
+        .child(line("settings.mods_guide_intro"))
+        .child(head("settings.mods_guide_where"))
+        .child(line("settings.mods_guide_where_body"))
+        .child(code("mods/my-mod/\n  mod.json   {\"place\":\"none\",\"title\":\"My mod\"}\n  main.js    the code"))
+        .child(head("settings.mods_guide_json"))
+        .child(line("settings.mods_guide_json_body"))
+        .child(head("settings.mods_guide_code"))
+        .child(line("settings.mods_guide_code_body"))
+        .child(code(GUIDE_EXAMPLE))
+        .child(head("settings.mods_guide_tools"))
+        .child(line("settings.mods_guide_tools_body"))
+        .child(head("settings.mods_guide_share"))
+        .child(line("settings.mods_guide_share_body"))
+}
+
 pub fn text(k: &str) -> String {
     let t = i18n::t(k);
     if t != k { t } else { k.to_owned() }
@@ -461,10 +488,11 @@ impl SettingsView {
         let (owner, repo) = (owner.to_owned(), repo.to_owned());
         let cache = mods::app_dir().join("mod-store").join("cache");
         let base = format!("https://raw.githubusercontent.com/{}/HEAD", r.full_name);
-        let bare = repo.strip_prefix("herdr-").unwrap_or(&repo).trim_end_matches("-mod").to_owned();
+        let bare = repo.strip_prefix("sunna-").or_else(|| repo.strip_prefix("herdr-")).unwrap_or(&repo).trim_end_matches("-mod").to_owned();
         // Shared folders hold their preview.png where the repo put them: try the usual places.
         let urls = vec![
             format!("{base}/preview.png"),
+            format!("{base}/sunna/{repo}/preview.png"),
             format!("{base}/herdr/{repo}/preview.png"),
             format!("{base}/herdr/{bare}/preview.png"),
             format!("{base}/herdr/{bare}-mod/preview.png"),
@@ -929,7 +957,7 @@ impl SettingsView {
         }
         let installed_tab = self.mods.tab == Tab::Installed;
         let detail = self.mods.detail.is_some();
-        let tabs = vec![(Tab::Installed, i18n::t("settings.mods_tab_installed")), (Tab::Explore, i18n::t("settings.mods_tab_explore"))];
+        let tabs = vec![(Tab::Installed, i18n::t("settings.mods_tab_installed")), (Tab::Explore, i18n::t("settings.mods_tab_explore")), (Tab::Guide, i18n::t("settings.mods_tab_guide"))];
         let mut page = div().w_full().flex().flex_col().gap(z(12.0)).child(
             div()
                 .flex()
@@ -939,6 +967,9 @@ impl SettingsView {
                 .child(self.seg(cx, "mods-tab", tabs, self.mods.tab, |this, v| this.mods.tab = v))
                 .when(installed_tab && !list.is_empty(), |d| d.child(div().text_size(z(12.0)).text_color(tone("dim")).child(i18n::tf("settings.mods_count", &[("count", &list.len().to_string())])))),
         );
+        if self.mods.tab == Tab::Guide {
+            return page.child(guide());
+        }
         page = page.child(self.install_box(window, cx));
         if self.mods.review.is_some() && !detail {
             page = page.child(self.review_panel(cx));
@@ -1063,8 +1094,8 @@ mod tests {
 
     #[test]
     fn kinds_are_the_three_github_topics() {
-        assert_eq!(KINDS.map(|(k, _)| k), ["herdr-layout", "herdr-mod", "herdr-theme"]);
-        assert_eq!(kind_key("herdr-theme"), "herdr-theme");
-        assert_eq!(kind_key("x"), "herdr-mod");
+        assert_eq!(KINDS.map(|(k, _)| k), ["sunna-layout", "sunna-mod", "sunna-theme"]);
+        assert_eq!(kind_key("sunna-theme"), "sunna-theme");
+        assert_eq!(kind_key("x"), "sunna-mod");
     }
 }

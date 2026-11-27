@@ -123,6 +123,7 @@ pub fn write_workspace() -> std::io::Result<()> {
         let _ = std::fs::remove_file(dir.join("CLAUDE.md"));
     }
     write_if_changed(&dir.join("herdr.d.ts"), DECLARATIONS)?;
+    write_if_changed(&dir.join("sunna.d.ts"), DECLARATIONS)?;
     let types = gpui_shell::type_declarations(&gpui_shell::FrozenComponentRegistry::default());
     write_if_changed(&dir.join("gpui-kit.d.ts"), &types)?;
     let _ = std::fs::remove_dir_all(frame_dir());
@@ -1348,12 +1349,22 @@ pub fn install_check_policy() {
     install_policy();
 }
 
-/// What mods may touch, and the `herdr` module they import.
+/// The app's module under both its names: `sunna`, and `herdr` for mods written before the rename.
+trait WithHostModules: Sized {
+    fn with_host_modules(self, module: HostModule) -> Result<Self, HostError>;
+}
+impl WithHostModules for gpui_shell::policy::Policy {
+    fn with_host_modules(self, module: HostModule) -> Result<Self, HostError> {
+        self.with_host_module(module.clone().renamed("sunna"))?.with_host_module(module)
+    }
+}
+
+/// What mods may touch, and the `sunna` module they import (also `herdr`).
 pub fn install_policy() -> async_channel::Receiver<Request> {
     gpui_shell::policy::update_default(|p| {
         p.with_capabilities(capabilities())
-            .with_host_module(module(Instance { name: String::new(), props: Value::Null }, 0))
-            .expect("herdr module is valid")
+            .with_host_modules(module(Instance { name: String::new(), props: Value::Null }, 0))
+            .expect("host modules are valid")
     });
     let (tx, rx) = async_channel::unbounded();
     let _ = REQUESTS.set(tx);
@@ -1384,8 +1395,8 @@ pub fn prepare_load(inst: &Instance) -> u64 {
         .with_application(inst.key())
         .with_capabilities(capabilities())
         .with_storage_path(dir.join(file))
-        .with_host_module(module(inst.clone(), copy))
-        .expect("herdr module is valid");
+        .with_host_modules(module(inst.clone(), copy))
+        .expect("host modules are valid");
     gpui_shell::policy::set_default(policy);
     copy
 }

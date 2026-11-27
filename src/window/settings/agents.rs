@@ -128,6 +128,13 @@ impl SettingsView {
         .detach();
     }
 
+    fn set_hooks(&mut self, on: bool, window: &mut Window, cx: &mut Context<Self>) {
+        match crate::agent_hooks::set(on) {
+            Ok(()) => cx.notify(),
+            Err(e) => self.notify(json!({ "level": "error", "title": e }), window, cx),
+        }
+    }
+
     pub(super) fn agents(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         self.load_agents(window, cx);
         let yolo = self.person.get("yolo").and_then(Value::as_object).cloned().unwrap_or_default();
@@ -136,6 +143,17 @@ impl SettingsView {
             i18n::t("settings.full_access"),
             Some(i18n::t("settings.full_access_about")),
             switch("st-yolo", all, self.act(cx, move |this, w, cx| this.change(w, cx, |q| set_all(q, !all)))),
+        ));
+        let hooked = crate::agent_hooks::is_installed();
+        let hook_button = if hooked {
+            controls::button("st-hooks-off", i18n::t("settings.agent_hooks_remove"), self.act(cx, |this, w, cx| this.set_hooks(false, w, cx)))
+        } else {
+            controls::button("st-hooks-on", i18n::t("settings.agent_hooks_install"), self.act(cx, |this, w, cx| this.set_hooks(true, w, cx)))
+        };
+        page = page.child(row(
+            i18n::t(if hooked { "settings.agent_hooks_on" } else { "settings.agent_hooks_off" }),
+            Some(i18n::t("settings.agent_hooks_about")),
+            hook_button,
         ));
         if self.agents.failed {
             page = page.child(controls::note(i18n::t("settings.agents_failed")));

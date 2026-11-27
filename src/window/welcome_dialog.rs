@@ -542,7 +542,7 @@ impl Render for WelcomeView {
                     .child(div().absolute().inset_0().child(Scrollbar::vertical(&self.scroll).mode(ScrollbarMode::Always))),
             )
             .child(self.dots());
-        let mut card = Dialog::new(format!("{}  BETA", i18n::t("welcome.welcome_to_herdr")), &self.focus, skip).width(WIDTH).no_cancel().body(body);
+        let mut card = Dialog::new(i18n::t("welcome.welcome_to_herdr"), &self.focus, skip).width(WIDTH).no_cancel().body(body);
         if self.page > 1 {
             card = card.action(Act::new(i18n::t("welcome.back"), Tone::Neutral, dialog::run(&this, |v, _, cx| v.go(-1, cx))));
         }

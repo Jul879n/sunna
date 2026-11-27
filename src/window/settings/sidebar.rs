@@ -98,6 +98,16 @@ fn text(k: &str) -> String {
     if t != k { t } else { k.to_owned() }
 }
 
+/// What a sidebar row is called: its mod's title, else the shipped panel's name (`tabs.<id>`), else its id.
+fn row_title(info: &BTreeMap<String, String>, id: &str, m: &str) -> String {
+    if let Some(t) = info.get(m) {
+        return text(t);
+    }
+    let key = format!("tabs.{id}");
+    let t = i18n::t(&key);
+    if t != key { t } else { id.to_owned() }
+}
+
 fn load_info() -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     let Ok(dir) = std::fs::read_dir(mods::app_dir().join("mods")) else { return out };
@@ -158,7 +168,7 @@ impl SettingsView {
         let line = |id: String| div().id(SharedString::from(id)).w_full().min_h(z(44.0)).mb(z(8.0)).px(z(16.0)).flex().flex_row().items_center().gap(z(8.0)).rounded(z(10.0)).border_1().border_color(c("border")).bg(c("surface"));
         let n = rows.len();
         for (i, (id, m)) in rows.iter().enumerate() {
-            let title = info.get(m).map_or_else(|| id.clone(), |t| text(t));
+            let title = row_title(&info, id, m);
             let enabled_now = on.contains(id);
             let mv = |dir: i32| {
                 let id = id.clone();
@@ -175,11 +185,19 @@ impl SettingsView {
             l = l.child(switch(format!("st-sb-t-{id}"), enabled_now, Self::act_on(&me, move |this, w, cx| this.toggle_panel(&tid, w, cx))));
             out = out.child(l);
         }
+        // A panel the sidebar already shows (by name) is not offered again: personal copies of
+        // retired shipped mods (`files-edited`, `files-edited-2`) would repeat «Archivos».
+        let mut shown: Vec<String> = rows.iter().map(|(id, m)| row_title(&info, id, m)).collect();
         for (m, t) in info.iter().filter(|(m, _)| !held.contains(m)) {
+            let name = text(t);
+            if shown.contains(&name) {
+                continue;
+            }
+            shown.push(name.clone());
             let mid = m.clone();
             out = out.child(
                 line(format!("st-sb-c-{m}"))
-                    .child(div().flex_1().min_w_0().truncate().text_size(z(14.0)).text_color(tone("muted")).child(text(t)))
+                    .child(div().flex_1().min_w_0().truncate().text_size(z(14.0)).text_color(tone("muted")).child(name))
                     .child(button(format!("st-sb-add-{m}"), i18n::t("settings.sidebar_add"), Self::act_on(&me, move |this, w, cx| this.edit_sidebar(Op::Add(mid.clone()), w, cx)))),
             );
         }
@@ -222,6 +240,15 @@ mod tests {
         assert_eq!(rows(&tree()), want);
         let bare: Value = serde_json::from_str(r#"{"id":"x"}"#).unwrap();
         assert!(rows(&bare).is_empty());
+    }
+
+    #[test]
+    fn a_shipped_panel_is_named_by_its_tab_and_an_unknown_one_by_its_id() {
+        let info = BTreeMap::from([("changes-edited".to_owned(), "tabs.changes".to_owned())]);
+        assert_eq!(row_title(&info, "files", "files"), i18n::t("tabs.files"));
+        assert_ne!(row_title(&info, "files", "files"), "files");
+        assert_eq!(row_title(&info, "panel-changes-edited", "changes-edited"), i18n::t("tabs.changes"));
+        assert_eq!(row_title(&info, "mine", "mine"), "mine");
     }
 
     #[test]

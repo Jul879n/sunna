@@ -122,7 +122,7 @@ fn layout_title(name: &str) -> String {
     match name {
         "main" => "Sunna".to_owned(),
         "terminals" => "Terminals".to_owned(),
-        "win98" => "Herdr 98".to_owned(),
+        "win98" => "Sunna 98".to_owned(),
         other => capitalize(other),
     }
 }

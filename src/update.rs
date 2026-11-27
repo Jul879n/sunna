@@ -80,7 +80,7 @@ const FORK_REPO: &str = "Jul879n/sunna";
 
 /// The fork check runs in the fork's builds only: never in official releases or tests.
 fn fork_enabled() -> bool {
-    !cfg!(test) && std::env::var_os("HERDR_NO_FORK_CHECK").is_none()
+    !cfg!(test) && crate::envx::var_os("NO_FORK_CHECK").is_none()
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -200,12 +200,12 @@ pub fn set_core(version: Option<String>, managed: Option<String>) {
 /// releases.herdr.dev, whose tarballs carry another name: only a test release
 /// server (`HERDR_RELEASES_URL`) is asked for the app here.
 fn checks_app() -> Option<PathBuf> {
-    root().filter(|_| std::env::var_os("HERDR_RELEASES_URL").is_some())
+    root().filter(|_| crate::envx::var_os("RELEASES_URL").is_some())
 }
 
 /// A release build checks the core; a source build only when pointed at a test release server.
 fn checks_core() -> bool {
-    option_env!("HERDR_APP_RELEASE").is_some() || std::env::var_os("HERDR_RELEASES_URL").is_some()
+    option_env!("HERDR_APP_RELEASE").is_some() || crate::envx::var_os("RELEASES_URL").is_some()
 }
 
 /// For the settings screen: both programs, what's waiting, when we last looked.
@@ -397,7 +397,7 @@ fn check_manifest(root: &Path, manifest_url: &str, changelog_base: Option<&str>)
     let (Some(url), Some(sha)) = (entry["url"].as_str(), entry["sha256"].as_str()) else {
         return Ok(None);
     };
-    tracing::info!("downloading Herdr {version}");
+    tracing::info!("downloading Sunna {version}");
     let work = beside(root, ".download");
     let _ = std::fs::remove_dir_all(&work);
     std::fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;

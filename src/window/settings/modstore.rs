@@ -1,7 +1,7 @@
 //! What Settings > Mods does to disk and the network: reading what is
 //! installed, installing mods, themes and layouts from GitHub (`owner/repo[@ref]`),
 //! a git URL or a folder (pinned to the commit that was read), turning mods
-//! off, and the GitHub catalog (topics herdr-mod, herdr-theme, herdr-layout).
+//! off, and the GitHub catalog (topics sunna-mod, sunna-theme, sunna-layout).
 //! Everything here blocks: the page runs it on a background thread. Nothing
 //! here reaches for the app's home on its own: it is always passed in.
 
@@ -357,7 +357,7 @@ pub fn install_items(home: &Path, items: &[Item], meta: &Origin, replace: Option
             copy_dir(&item.path, &dest).map_err(io)?;
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
             let record = json!({ "source": meta.source, "ref": meta.git_ref, "commit": meta.commit, "installed_at": timefmt::iso(now) });
-            std::fs::write(dest.join(".herdr-install.json"), serde_json::to_string_pretty(&record).unwrap_or_default() + "\n").map_err(io)?;
+            std::fs::write(dest.join(".sunna-install.json"), serde_json::to_string_pretty(&record).unwrap_or_default() + "\n").map_err(io)?;
         } else {
             if dest.exists() {
                 return Err(Fail::new("settings.mods_exists"));
@@ -412,7 +412,7 @@ pub fn list_installed(home: &Path) -> Vec<Installed> {
                 disabled,
                 rel: format!("{rel_root}/{name}"),
                 meta: read_json(&dir.join("mod.json")).unwrap_or_else(|| json!({})),
-                install: read_json(&dir.join(".herdr-install.json")),
+                install: read_json(&dir.join(".sunna-install.json")).or_else(|| read_json(&dir.join(".herdr-install.json"))),
                 caps: scan_capabilities(&dir),
                 shipped: !disabled && SHIPPED_MODS.contains(&name.as_str()),
                 dir,
@@ -611,7 +611,7 @@ mod tests {
         assert_eq!(install_items(&home, &items[1..], &meta, None).unwrap(), 1);
         assert_eq!(std::fs::read_to_string(home.join("mods/b/main.js")).unwrap(), "b");
         assert!(!home.join("mods/b/.git").exists());
-        let record = read_json(&home.join("mods/b/.herdr-install.json")).unwrap();
+        let record = read_json(&home.join("mods/b/.sunna-install.json")).unwrap();
         assert_eq!((record["source"].as_str(), record["commit"].as_str()), (Some("acme/x"), Some("abc123")));
         // Updating replaces the mod that is being updated.
         let update = with_existing(&home, scan_source(&src, "").unwrap(), Some("a"));

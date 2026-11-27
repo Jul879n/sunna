@@ -92,7 +92,7 @@ impl AppWindow {
                 let here = self.model.focused_pane().and_then(|p| self.model.address_of(&p)).and_then(|a| self.cwds.get(&a).cloned());
                 let folder = here.or_else(|| self.model.active_space().map(|s| s.folder.clone())).unwrap_or_else(home);
                 // No `herdr.space` label: the app adopts a terminal that has one into a tab.
-                let labels = json!({ "herdr.float": "1", "herdr.seen": "0" });
+                let labels = json!({ "sunna.float": "1", "sunna.seen": "0" });
                 self.require_document(None)?;
                 let address = self.core.run(Vec::new(), Some(folder.clone()), labels, None, None, crate::terminal::initial_display(window)).map_err(|e| format!("{}: {e:#}", i18n::t("float.no_terminal")))?;
                 self.born.borrow_mut().insert(address.clone(), Instant::now());

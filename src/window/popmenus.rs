@@ -92,7 +92,7 @@ pub(super) fn pane_items(target: &Value, terminals: &[Value], panes: &[Value], b
     let (pane, address) = (str_of(target, "pane"), str_of(target, "terminal"));
     let term = terminals.iter().find(|t| str_of(t, "address") == address);
     let parent = term.and_then(|t| t.get("parent").and_then(Value::as_str)).and_then(|p| terminals.iter().find(|t| str_of(t, "address") == p));
-    let to_program = term.is_some_and(|t| t.pointer("/labels/herdr.right-click").and_then(Value::as_str) == Some("program"));
+    let to_program = term.is_some_and(|t| crate::labels::text(t, "right-click") == Some("program"));
     let in_tab = panes.iter().any(|p| str_of(p, "pane") == pane);
     let hint = |a: &str| shortcut(bindings, a, mac);
     let mut out = Vec::new();

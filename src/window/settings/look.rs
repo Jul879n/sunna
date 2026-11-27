@@ -16,7 +16,7 @@ fn look_name(name: &str) -> String {
     match name {
         "main" => "Sunna".to_owned(),
         "terminals" => i18n::t("settings.terminals"),
-        "win98" => "Herdr 98".to_owned(),
+        "win98" => "Sunna 98".to_owned(),
         other => other.to_owned(),
     }
 }

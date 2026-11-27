@@ -154,13 +154,13 @@ fn all() -> Vec<Note> {
 }
 
 fn media_path(url: &str) -> std::path::PathBuf {
-    let preview = std::env::var_os("HERDR_NOTES_MEDIA_DIR").is_some()
+    let preview = crate::envx::var_os("NOTES_MEDIA_DIR").is_some()
         && local_media_path(url, std::path::Path::new("")).is_some();
     path(if preview { "update-notes-preview" } else { "update-notes-media" }).join(crate::update::sha256(url.as_bytes()))
 }
 
 fn local_media_path(url: &str, dir: &std::path::Path) -> Option<std::path::PathBuf> {
-    let key = url.strip_prefix("https://media.herdr.dev/")?;
+    let key = url.strip_prefix("https://github.com/Jul879n/sunna/releases/download/")?;
     let parts: Vec<_> = key.split('/').collect();
     if parts.len() != 2 || parts.iter().any(|p| p.is_empty() || *p == "." || *p == ".." || !p.bytes().all(|b| b.is_ascii_alphanumeric() || b".-_".contains(&b))) {
         return None;
@@ -169,7 +169,7 @@ fn local_media_path(url: &str, dir: &std::path::Path) -> Option<std::path::PathB
 }
 
 fn preview_media(url: &str) -> bool {
-    let Some(dir) = std::env::var_os("HERDR_NOTES_MEDIA_DIR") else { return false };
+    let Some(dir) = crate::envx::var_os("NOTES_MEDIA_DIR") else { return false };
     let Some(local) = local_media_path(url, std::path::Path::new(&dir)) else { return false };
     let file = media_path(url);
     let _ = std::fs::create_dir_all(path("update-notes-preview"));
@@ -351,8 +351,8 @@ mod tests {
     #[test]
     fn local_media_is_limited_to_canonical_media_urls() {
         let dir = std::path::Path::new("/var/tmp/media");
-        assert_eq!(local_media_path("https://media.herdr.dev/0.1.4/peek.webp", dir), Some(dir.join("0.1.4/peek.webp")));
-        for url in ["https://example.com/0.1.4/peek.webp", "https://media.herdr.dev/../peek.webp", "https://media.herdr.dev/0.1.4/a/b.webp", "https://media.herdr.dev/0.1.4/%2e%2e", "https://media.herdr.dev/0.1.4/a.webp?query"] {
+        assert_eq!(local_media_path("https://github.com/Jul879n/sunna/releases/download/0.1.4/peek.webp", dir), Some(dir.join("0.1.4/peek.webp")));
+        for url in ["https://example.com/0.1.4/peek.webp", "https://github.com/Jul879n/sunna/releases/download/../peek.webp", "https://github.com/Jul879n/sunna/releases/download/0.1.4/a/b.webp", "https://github.com/Jul879n/sunna/releases/download/0.1.4/%2e%2e", "https://github.com/Jul879n/sunna/releases/download/0.1.4/a.webp?query"] {
             assert!(local_media_path(url, dir).is_none());
         }
     }

@@ -443,6 +443,12 @@ impl HostModule {
         }
     }
 
+    /// The same module under another specifier: a copy that shares every function.
+    pub fn renamed(mut self, name: impl Into<String>) -> Self {
+        self.name = name.into();
+        self
+    }
+
     /// Exports one Rust-built element constructor from this module.
     pub fn component(
         mut self,

@@ -35,7 +35,7 @@ fn start() -> Option<Child> {
     } else if cfg!(target_os = "linux") {
         // `tail --pid` ends with the app, so a crash can't leave the inhibitor behind.
         let mut c = crate::spawn::command("systemd-inhibit");
-        c.args(["--what=idle:sleep", "--who=Herdr", "--why=Herdr", "--mode=block", "tail", &format!("--pid={pid}"), "-f", "/dev/null"]);
+        c.args(["--what=idle:sleep", "--who=Sunna", "--why=Sunna", "--mode=block", "tail", &format!("--pid={pid}"), "-f", "/dev/null"]);
         c
     } else {
         return None;

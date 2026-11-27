@@ -25,7 +25,6 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
 pub const VERSION: u32 = 1;
-const ENDPOINT: &str = "https://telemetry.herdr.dev/v1/report";
 /// Frozen reports older than this are dropped unsent.
 const KEEP_DAYS: i64 = 7;
 const TICK: Duration = Duration::from_secs(30);
@@ -90,8 +89,10 @@ fn read_env_off() -> Option<&'static str> {
     if set("DO_NOT_TRACK").is_some_and(truthy) {
         return Some("DO_NOT_TRACK");
     }
-    if set("HERDR_TELEMETRY").is_some_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "0" | "false" | "off" | "no")) {
-        return Some("HERDR_TELEMETRY");
+    for name in ["SUNNA_TELEMETRY", "HERDR_TELEMETRY"] {
+        if set(name).is_some_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "0" | "false" | "off" | "no")) {
+            return Some(name);
+        }
     }
     const CI: &[&str] = &["CI", "GITHUB_ACTIONS", "GITLAB_CI", "CIRCLECI", "BUILDKITE", "JENKINS_URL", "TEAMCITY_VERSION"];
     CI.iter().any(|k| set(k).is_some()).then_some("CI")
@@ -99,10 +100,8 @@ fn read_env_off() -> Option<&'static str> {
 
 /// Where reports go, if this build sends at all.
 fn endpoint() -> Option<String> {
-    match std::env::var("HERDR_TELEMETRY_URL").ok().filter(|u| !u.is_empty()) {
-        Some(url) => Some(url),
-        None => option_env!("HERDR_APP_RELEASE").map(|_| ENDPOINT.to_owned()),
-    }
+    // Sunna has no telemetry server: only a test server sends.
+    std::env::var("HERDR_TELEMETRY_URL").ok().filter(|u| !u.is_empty())
 }
 
 pub fn collecting() -> bool {
@@ -621,7 +620,7 @@ impl Worker {
             "setting": SETTING.load(Ordering::Relaxed),
             "off_because": env_off(),
             "sends": endpoint().is_some(),
-            "endpoint": endpoint().unwrap_or_else(|| ENDPOINT.to_owned()),
+            "endpoint": endpoint().unwrap_or_default(),
             "draft": self.install.as_ref().filter(|_| on).map(|i| self.day.report(i)),
             "queued": queued,
             "last_sent": last,

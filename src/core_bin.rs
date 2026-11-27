@@ -88,7 +88,7 @@ pub fn find(configured: Option<&str>) -> Option<PathBuf> {
         return Some(found);
     }
     // Tests: HERDR_CORE_DIRS replaces every place Herdr would look.
-    if let Some(dirs) = std::env::var_os("HERDR_CORE_DIRS") {
+    if let Some(dirs) = crate::envx::var_os("CORE_DIRS") {
         return pick(std::env::split_paths(&dirs).flat_map(|d| names(&d)).collect());
     }
     // The quick places first; the login shell (slow) only if they have none.
@@ -104,9 +104,9 @@ fn expand(p: &str, home: &Path) -> PathBuf {
     }
 }
 
-fn names(dir: &Path) -> [PathBuf; 2] {
+fn names(dir: &Path) -> [PathBuf; 3] {
     let exe = std::env::consts::EXE_SUFFIX;
-    [dir.join(format!("herdr-core{exe}")), dir.join(format!("hc{exe}"))]
+    [dir.join(format!("herdr-core{exe}")), dir.join(format!("sunna-core{exe}")), dir.join(format!("hc{exe}"))]
 }
 
 fn dirs_on(path: &std::ffi::OsStr) -> impl Iterator<Item = PathBuf> + '_ {

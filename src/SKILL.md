@@ -1,6 +1,6 @@
 # sunna: drive the person's window
 
-Herdr shows spaces, tabs and panes. herdr-core (`hc`) runs their terminals
+Sunna shows spaces, tabs and panes. Sunna Core (`hc`) runs their terminals
 and keeps them alive when the window closes. Use `sunna` only to change
 what the person sees. For starting, reading, messaging, waiting on or cleaning
 up agents and programs, read `hc --skill` and use hc.
@@ -145,8 +145,8 @@ the space with a new terminal; from a script (`sunna do`) it still closes the sp
 (`reduce_effects`, `show_app_name`) are described in the guide in your config folder; `shell` only
 affects terminals the app starts on this machine.
 
-A terminal started with hc opts into the window with `herdr.space=<id>`.
-`herdr.tab=<id>` chooses its tab; without it, Herdr creates a tab in that space.
+A terminal started with hc opts into the window with `sunna.space=<id>`.
+`sunna.tab=<id>` chooses its tab; without it, Sunna creates a tab in that space.
 Unlabeled workers stay hidden. Do not add labels just to run a background
 worker. Use app commands when the
 user wants to see a new tab or split, hc for orchestration that need not change
@@ -194,7 +194,7 @@ Project groups and lineage: `group.new {key, name?, color?}`, `group.rename {id,
   `"focus"` from `nextCommand()` and focuses its own keyboard handle.
 - A mod's `watchFolder(dir)` promise has `cancel()`; cancel it when the folder
   is no longer shown. It resolves with `[]` and releases only that call.
-- Shipped mods belong to Herdr: duplicate with `mod.clone` before editing.
+- Shipped mods belong to Sunna: duplicate with `mod.clone` before editing.
   Shipped layouts likewise use `layout.clone` for a personal copy.
   `layout.edit` toggles a drag mode for rearranging the blocks of the shown
   layout; `layout.move {id, before|after}` does it by command, and on a shipped
@@ -221,7 +221,7 @@ sunna shot /tmp/mod.png   # then look at the picture
 
 `check` loads the mod and renders it once. It exits nonzero with the exact
 error. Its shared state starts empty and stays in memory; it leaves shared.json
-untouched. Its `init()` still runs: import `checking` from `"herdr"` and guard
+untouched. Its `init()` still runs: import `checking` from `"sunna"` and guard
 process side effects with `if (checking()) return;`. It is true throughout a
 check and false in a live window; `exec`, `hc` and `writeTextFile` still run
 and warn during checks. Never call a mod done without a passing check.
@@ -237,7 +237,7 @@ capture or permissions. It needs a running window that has drawn a frame;
 
 ## Problems and safety
 
-If Herdr misbehaves, `sunna feedback "<what happened>"` drafts a report.
+If Sunna misbehaves, `sunna feedback "<what happened>"` drafts a report.
 The person reviews and sends it; it does not silently send feedback.
 
 Never experiment with pointer/key automation on the person's real display.
