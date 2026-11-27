@@ -134,7 +134,7 @@ impl SettingsView {
             list = list.child(item(format!("st-fd-{which}"), i18n::tf("settings.default_def", &[("def", def)]), def.to_owned(), choose(None)));
         }
         if matches.is_empty() {
-            list = list.child(div().px(settings::z(10.0)).py(settings::z(8.0)).text_size(settings::z(12.5)).text_color(c("muted")).child(i18n::tf("settings.no_results", &[("query", &self.fonts.query)])));
+            list = list.child(div().px(settings::z(10.0)).py(settings::z(8.0)).text_size(settings::z(12.5)).text_color(tone("muted")).child(i18n::tf("settings.no_results", &[("query", &self.fonts.query)])));
         }
         for (i, f) in matches.into_iter().enumerate() {
             list = list.child(item(format!("st-fi-{which}-{i}"), f.clone(), f.clone(), choose(Some(f))));
@@ -148,7 +148,7 @@ impl SettingsView {
             .rounded(settings::z(10.0))
             .border_1()
             .border_color(c("border"))
-            .bg(c("background"))
+            .bg(super::super::dialog::field_bg())
             .child(div().p(settings::z(8.0)).child(controls::field_fill(&self.fonts.input, self.fonts.focused)))
             .child(list)
     }

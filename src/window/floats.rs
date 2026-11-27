@@ -143,7 +143,7 @@ impl AppWindow {
                 .rounded(settings::z(8.0))
                 .bg(c("popover"))
                 .text_xs()
-                .text_color(c("blocked"))
+                .text_color(tone("blocked"))
                 .child(format!("{} did not load: {e}", inst.name))
                 .into_any_element(),
             _ => div().into_any_element(),

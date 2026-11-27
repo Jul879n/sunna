@@ -113,12 +113,12 @@ impl AppWindow {
             Some(outline(b, 0.25))
         });
         let banner = div().id("layout-edit-banner").absolute().top(settings::z(10.)).left(relative(0.5)).ml(-settings::z(190.))
-            .w(settings::z(380.)).h(settings::z(36.)).px(settings::z(12.)).rounded(settings::z(8.))
+            .w(settings::z(380.)).h(settings::z(44.)).px(settings::z(12.)).rounded(settings::z(8.))
             .bg(c("raised")).border_1().border_color(c("border")).occlude()
             .flex().items_center().gap(settings::z(10.))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(div().flex_1().text_size(settings::z(12.5)).text_color(c("foreground")).child(crate::i18n::t("layout_edit.hint")))
-            .child(div().id("layout-edit-done").h(settings::z(24.)).px(settings::z(10.)).rounded(settings::z(6.)).flex().items_center()
+            .child(div().id("layout-edit-done").h(settings::z(32.)).px(settings::z(10.)).rounded(settings::z(6.)).flex().items_center()
                 .bg(c("accent")).text_size(settings::z(12.5)).text_color(c("background")).cursor_pointer()
                 .on_click(cx.listener(|this, _, _, cx| this.toggle_layout_edit(cx)))
                 .child(crate::i18n::t("layout_edit.done")));

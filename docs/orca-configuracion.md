@@ -13,16 +13,16 @@ Clasificación hecha leyendo el código de Sunna; los **Mod** y **Can** se confi
 | Zoom de la interfaz | Ya (`zoom`) |
 | Fuente de la interfaz | Ya (`ui_font`) |
 | Contraste | Ya (`minimum_contrast`) |
-| Ícono de la app | Can |
-| Reducir efectos visuales | Can |
+| Ícono de la app | Can (pendiente: no entra en este ítem) |
+| Reducir efectos visuales | Ya (`reduce_effects`: sin sombras, vidrio ni terminales translúcidos) |
 | Mostrar archivos ignorados por Git | Mod (Archivos) |
-| Nombre de la app en la barra de título | Can |
+| Nombre de la app en la barra de título | Ya (`show_app_name`; solo macOS con barra del sistema; Linux/Windows ya muestran el título) |
 | Apariencia de la barra lateral izquierda | Mod (ya configurable) |
 | Diseño de la tarjeta de espacio | Mod (Espacios) |
 | Mostrar también worktrees fijados en su lista | Mod (Espacios) |
 | Botones Tareas / Automatizaciones / Móvil | Mod (barra lateral) |
 | Formato de uso en la barra de estado | Mod (Estado) |
-| Minimizar a la bandeja al cerrar, ícono de la barra de menú | Can |
+| Minimizar a la bandeja al cerrar, ícono de la barra de menú | Límite (GPUI no ofrece ícono de bandeja ni de barra de menús; sin dependencias nuevas no se puede) |
 | Orden de pestañas recientes | Mod (Pestañas) |
 
 ## General
@@ -33,7 +33,7 @@ Clasificación hecha leyendo el código de Sunna; los **Mod** y **Can** se confi
 | Carpeta por proyecto | Mod (Worktree) |
 | Abrir en apps (menú «Abrir en») | Mod (menú de proyecto) |
 | Pestañas de vista previa | Mod (Archivos) |
-| Confirmaciones (cerrar, eliminar) | Can para las del núcleo; Mod para las de mods |
+| Confirmaciones (cerrar, eliminar) | Ya para cerrar terminales activas (`confirm_close_running`) y espacios; Mod para las de mods |
 | Buscar actualizaciones | Ya (Actualizaciones) |
 | Acerca de | Mod |
 
@@ -46,28 +46,28 @@ Clasificación hecha leyendo el código de Sunna; los **Mod** y **Can** se confi
 | Escritura de portapapeles de TUI (OSC 52) | Ya (`clipboard_write`) |
 | Contraste de color | Ya (`minimum_contrast`) |
 | Option como Alt | Ya (`option_as_alt`) |
-| Forma, parpadeo y opacidad del cursor | Can |
-| Opacidad del fondo y del panel inactivo | Can |
-| Grosor del divisor | Can |
-| Relleno horizontal y vertical | Can |
-| Aceleración por GPU | Can |
-| Foco sigue al ratón | Can |
-| Ocultar ratón al escribir | Can |
-| Bajar al final al escribir | Can |
-| Preguntar antes de cerrar terminales activas | Can |
-| Shell predeterminado | Can |
+| Forma, parpadeo y opacidad del cursor | Ya (`cursor_shape`, `cursor_blink`, `cursor_opacity`) |
+| Opacidad del fondo y del panel inactivo | Ya (`terminal_opacity`, `inactive_pane_opacity`) |
+| Grosor del divisor | Ya (`divider_width`) |
+| Relleno horizontal y vertical | Ya (`terminal_padding`) |
+| Aceleración por GPU | Límite (GPUI usa Metal/wgpu sin interruptor público; el renderizador la elige) |
+| Foco sigue al ratón | Ya (`focus_follows_mouse`) |
+| Ocultar ratón al escribir | Ya en macOS (`hide_mouse_on_type`); Límite en Linux/Windows (GPUI no tiene `CursorStyle::None`) |
+| Bajar al final al escribir | Ya (`scroll_on_input`) |
+| Preguntar antes de cerrar terminales activas | Ya (`confirm_close_running`) |
+| Shell predeterminado | Ya parcial (`shell`: solo terminales que lanza la app en este equipo; el core no tiene ajuste propio) |
 | Importar de Ghostty / Kitty | Mod (lee los archivos de configuración) + Can para aplicar |
-| Pegar con clic central | Can |
-| Recortar margen al copiar | Can |
+| Pegar con clic central | Ya (`middle_click_paste`) |
+| Recortar margen al copiar | Ya (`trim_copy_margin`) |
 
 ## Notificaciones
 | Ajuste de Orca | Estado |
 |---|---|
 | Sonidos (activar, volumen, sonido) | Ya (`sounds`) |
 | Agente terminó / necesita entrada | Ya (Alertas) |
-| Campana del terminal | Can |
-| Suprimir con la ventana en foco | Can |
-| Notificación de prueba | Mod |
+| Campana del terminal | Ya (`notifications.bell`) |
+| Suprimir con la ventana en foco | Ya (`notifications.suppress_when_focused`) |
+| Notificación de prueba | Ya (Alertas > Enviar) |
 | Disco casi lleno, pestañas ocultas | No aplica |
 
 ## Agentes, chat y automatización

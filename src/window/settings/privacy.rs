@@ -29,7 +29,7 @@ fn report(id: String, title: String, about: Option<String>, data: &Value) -> Div
         .flex_col()
         .gap(z(4.0))
         .child(div().text_size(z(13.5)).text_color(c("foreground")).child(title))
-        .when_some(about, |d, a| d.child(div().text_size(z(12.5)).text_color(c("dim")).child(a)))
+        .when_some(about, |d, a| d.child(div().text_size(z(12.5)).text_color(tone("dim")).child(a)))
         .child(
             div()
                 .id(SharedString::from(id))
@@ -41,10 +41,10 @@ fn report(id: String, title: String, about: Option<String>, data: &Value) -> Div
                 .rounded(z(8.0))
                 .border_1()
                 .border_color(c("border"))
-                .bg(c("background"))
+                .bg(super::super::dialog::field_bg())
                 .overflow_x_scroll()
                 .children(lines.into_iter().map(|l| {
-                    div().font_family("JetBrains Mono").text_size(z(12.0)).line_height(z(17.0)).text_color(c("muted")).whitespace_nowrap().child(if l.is_empty() { " ".to_owned() } else { l })
+                    div().font_family("JetBrains Mono").text_size(z(12.0)).line_height(z(17.0)).text_color(tone("muted")).whitespace_nowrap().child(if l.is_empty() { " ".to_owned() } else { l })
                 })),
         )
 }
@@ -73,7 +73,7 @@ impl SettingsView {
             return page;
         }
         if s["enabled"] != json!(true) {
-            return page.child(div().pt(z(14.0)).text_size(z(13.0)).text_color(c("dim")).child(i18n::t("settings.nothing_is_collected_or_sent")));
+            return page.child(div().pt(z(14.0)).text_size(z(13.0)).text_color(tone("dim")).child(i18n::t("settings.nothing_is_collected_or_sent")));
         }
         for (i, r) in s["queued"].as_array().into_iter().flatten().enumerate() {
             let day = r["day"].as_str().unwrap_or_default();

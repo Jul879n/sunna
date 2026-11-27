@@ -17,6 +17,16 @@ pub enum Content {
         #[serde(default, skip_serializing_if = "Value::is_null")]
         props: Value,
     },
+    /// A block the app itself draws in Rust (`{"native": "status"}`), by name.
+    /// `props` is what that block reads (as a mod's props). A name the app
+    /// doesn't know shows an empty block, so a layout from a newer version
+    /// still loads. Written before the native blocks, `{"mod": "workspace-status"}`
+    /// and its kin keep working: see [`native_alias`].
+    Native {
+        native: String,
+        #[serde(default, skip_serializing_if = "Value::is_null")]
+        props: Value,
+    },
     /// A tab's terminals as it arranges them (`"active"`: the selected one),
     /// each pane wrapped as `pane` says.
     Context {
@@ -28,6 +38,27 @@ pub enum Content {
     },
     /// An agent's terminal, full size (`"focused"`: the selected agent).
     Agent { agent: String },
+}
+
+/// The native block a shipped mod name stands for: layouts saved before the
+/// block went native (and users' own) still say `{"mod": "workspace-status"}`.
+/// Where the person keeps a mod folder of that name, the mod wins (the caller checks).
+pub fn native_alias(name: &str, props: &Value) -> Option<&'static str> {
+    match name {
+        "workspace-status" => Some("status"),
+        "welcome" => Some("welcome"),
+        "tabs" => Some("tabs"),
+        "spaces" => Some("spaces"),
+        "files" => Some("files"),
+        "changes" => Some("changes"),
+        "search" => Some("search"),
+        "agents" => Some("agents"),
+        "activity" => Some("activity"),
+        "bots" => Some("bots"),
+        "peek" => Some("peek"),
+        "workspace-chrome" => Some(if props.get("footer").and_then(Value::as_bool) == Some(true) { "sidebar-footer" } else { "brand" }),
+        _ => None,
+    }
 }
 
 /// Which side of its node a floating block sits on. Left/right make it

@@ -198,13 +198,13 @@ fn badge(label: impl Into<SharedString>, tint: bool) -> Div {
         .rounded(z(5.0))
         .bg(if tint { c("accent") } else { c("hover") })
         .text_size(z(11.0))
-        .text_color(if tint { c("accent_foreground") } else { c("muted") })
+        .text_color(if tint { on_accent() } else { tone("muted") })
         .child(label.into())
 }
 
 /// A button that can't be pressed now.
 fn inert(label: impl Into<SharedString>) -> Div {
-    div().h(z(32.0)).px(z(12.0)).flex().items_center().rounded(z(7.0)).border_1().border_color(c("border")).opacity(0.5).text_size(z(13.0)).text_color(c("dim")).child(label.into())
+    div().h(z(32.0)).px(z(12.0)).flex().items_center().rounded(z(7.0)).border_1().border_color(c("border")).opacity(0.5).text_size(z(13.0)).text_color(tone("dim")).child(label.into())
 }
 
 fn caps_badges(caps: &Caps) -> Vec<Div> {
@@ -502,7 +502,7 @@ impl SettingsView {
 
     fn search_box(&self, id: &'static str, input: &Entity<InputState>, window: &Window, cx: &App) -> Stateful<Div> {
         let focused = input.read(cx).focus_handle(cx).is_focused(window);
-        div().id(id).w(z(200.0)).h(z(32.0)).px(z(10.0)).flex().items_center().rounded(z(8.0)).border_1().border_color(if focused { c("ring") } else { c("border") }).bg(c("background")).text_size(z(12.5)).on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()).child(div().size_full().child(gpui_base::input::Input::new(input)))
+        div().id(id).w(z(200.0)).h(z(32.0)).px(z(10.0)).flex().items_center().rounded(z(8.0)).border_1().border_color(if focused { c("ring") } else { c("border") }).bg(super::super::dialog::field_bg()).text_size(z(12.5)).on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()).child(div().size_full().child(gpui_base::input::Input::new(input)))
     }
 
     fn install_box(&mut self, window: &Window, cx: &mut Context<Self>) -> Div {
@@ -547,7 +547,7 @@ impl SettingsView {
             .bg(c("surface"))
             .child(div().text_size(z(14.0)).font_weight(FontWeight::SEMIBOLD).text_color(c("foreground")).child(r.src.label.clone()));
         if let Some(commit) = &r.commit {
-            panel = panel.child(div().text_size(z(12.0)).text_color(c("dim")).child(format!("{} {}", i18n::t("settings.mods_commit"), commit.chars().take(7).collect::<String>())));
+            panel = panel.child(div().text_size(z(12.0)).text_color(tone("dim")).child(format!("{} {}", i18n::t("settings.mods_commit"), commit.chars().take(7).collect::<String>())));
         }
         for (n, i) in r.items.iter().enumerate() {
             let on = i.checked && !i.exists;
@@ -578,17 +578,17 @@ impl SettingsView {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .bg(if on { c("accent") } else { c("background") })
-                        .when(on, |d| d.child(svg().data(include_bytes!("../../../assets/icons/settings/check.svg")).size(z(12.0)).text_color(c("accent_foreground")))),
+                        .bg(if on { c("accent") } else { super::super::dialog::field_bg() })
+                        .when(on, |d| d.child(svg().data(include_bytes!("../../../assets/icons/settings/check.svg")).size(z(12.0)).text_color(on_accent()))),
                 )
                 .child(div().text_size(z(13.0)).text_color(if exists { c("dim") } else { c("foreground") }).child(i.name.clone()))
                 .child(badge(i18n::t(kinds(i.kind)), false))
-                .when(exists, |d| d.child(div().text_size(z(12.0)).text_color(c("blocked")).child(i18n::t("settings.mods_exists"))))
+                .when(exists, |d| d.child(div().text_size(z(12.0)).text_color(tone("blocked")).child(i18n::t("settings.mods_exists"))))
                 .children(caps_badges(&i.caps));
             panel = panel.child(row);
         }
         panel
-            .child(div().text_size(z(12.5)).line_height(z(18.0)).text_color(c("muted")).child(i18n::t("settings.mods_trust_warning")))
+            .child(div().text_size(z(12.5)).line_height(z(18.0)).text_color(tone("muted")).child(i18n::t("settings.mods_trust_warning")))
             .child(
                 div()
                     .flex()
@@ -608,9 +608,9 @@ impl SettingsView {
         let inner: AnyElement = if let Some(p) = m.meta["preview"].as_str() {
             img(home.join(&m.rel).join(p)).w(z(56.0)).h(z(56.0)).object_fit(gpui::ObjectFit::Cover).into_any_element()
         } else if let Some(icon) = m.meta["panel"]["icon"].as_str().filter(|i| home.join(i).exists()) {
-            svg().external_path(home.join(icon).to_string_lossy().into_owned()).size(z(26.0)).text_color(c("muted")).into_any_element()
+            svg().external_path(home.join(icon).to_string_lossy().into_owned()).size(z(26.0)).text_color(tone("muted")).into_any_element()
         } else {
-            div().text_size(z(22.0)).font_weight(FontWeight::SEMIBOLD).text_color(c("muted")).child(m.title().chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default()).into_any_element()
+            div().text_size(z(22.0)).font_weight(FontWeight::SEMIBOLD).text_color(tone("muted")).child(m.title().chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default()).into_any_element()
         };
         div().w(z(56.0)).h(z(56.0)).flex_none().rounded(z(10.0)).overflow_hidden().flex().items_center().justify_center().bg(c("hover")).child(inner)
     }
@@ -640,7 +640,7 @@ impl SettingsView {
                         actions.push(button(id("upd"), i18n::t("settings.mods_update"), self.act(cx, move |this, w, cx| this.start_install(input.clone(), Some(name.clone()), w, cx))).into_any_element());
                     }
                     Some(latest) if !latest.is_empty() => {
-                        actions.push(div().h(z(32.0)).flex().items_center().text_size(z(12.5)).text_color(c("dim")).child(i18n::t("settings.mods_up_to_date")).into_any_element());
+                        actions.push(div().h(z(32.0)).flex().items_center().text_size(z(12.5)).text_color(tone("dim")).child(i18n::t("settings.mods_up_to_date")).into_any_element());
                     }
                     _ => {
                         let c1 = mm.clone();
@@ -653,7 +653,7 @@ impl SettingsView {
         let mut head = div().flex().flex_row().items_center().gap(z(8.0)).flex_wrap().child(div().text_size(z(14.0)).font_weight(FontWeight::SEMIBOLD).text_color(c("foreground")).child(m.title()));
         for key in ["version", "author"] {
             if let Some(v) = m.meta[key].as_str().filter(|v| !v.is_empty()) {
-                head = head.child(div().text_size(z(12.0)).text_color(c("dim")).child(v.to_owned()));
+                head = head.child(div().text_size(z(12.0)).text_color(tone("dim")).child(v.to_owned()));
             }
         }
         head = head.child(badge(i18n::t(kind), false)).child(badge(i18n::t(if m.disabled { "settings.mods_off" } else { "settings.mods_on" }), false));
@@ -662,11 +662,11 @@ impl SettingsView {
         }
         let mut body = div().flex_1().min_w_0().flex().flex_col().gap(z(5.0)).child(head);
         if let Some(d) = m.meta["description"].as_str().filter(|d| !d.is_empty()) {
-            body = body.child(div().text_size(z(12.5)).line_height(z(18.0)).text_color(c("muted")).child(text(d)));
+            body = body.child(div().text_size(z(12.5)).line_height(z(18.0)).text_color(tone("muted")).child(text(d)));
         }
         if let Some(i) = &m.install {
             let line = format!("{}{} · {}", i["source"].as_str().unwrap_or_default(), short.map(|s| format!(" @ {s}")).unwrap_or_default(), i["installed_at"].as_str().unwrap_or_default().chars().take(10).collect::<String>());
-            body = body.child(div().text_size(z(11.5)).text_color(c("dim")).truncate().child(line));
+            body = body.child(div().text_size(z(11.5)).text_color(tone("dim")).truncate().child(line));
         }
         let caps = caps_badges(&m.caps);
         if !caps.is_empty() {
@@ -714,7 +714,7 @@ impl SettingsView {
         let hero: AnyElement = if self.preview_ok(&r.full_name) {
             img(cache.join(format!("{owner}__{repo}.png"))).h(z(200.0)).object_fit(gpui::ObjectFit::Contain).into_any_element()
         } else {
-            svg().data(include_bytes!("../../../assets/icons/settings/puzzle.svg")).size(z(40.0)).text_color(c("dim")).into_any_element()
+            svg().data(include_bytes!("../../../assets/icons/settings/puzzle.svg")).size(z(40.0)).text_color(tone("dim")).into_any_element()
         };
         let avatar = div().w(z(36.0)).h(z(36.0)).flex_none().rounded(z(10.0)).bg(c("raised")).overflow_hidden().when(self.preview_ok(&format!("avatar:{owner}")), |d| d.child(img(cache.join(format!("avatar-{owner}.png"))).size(z(36.0))));
         let (url, name) = (r.html_url.clone(), r.full_name.clone());
@@ -744,24 +744,24 @@ impl SettingsView {
                             .flex()
                             .flex_col()
                             .child(div().truncate().text_size(z(18.0)).font_weight(FontWeight::SEMIBOLD).text_color(c("foreground")).child(repo))
-                            .child(div().text_size(z(12.0)).text_color(c("dim")).child(format!("{owner} · {kind_label}"))),
+                            .child(div().text_size(z(12.0)).text_color(tone("dim")).child(format!("{owner} · {kind_label}"))),
                     )
                     .child(button("st-detail-github", i18n::t("settings.mods_view_github"), controls::act(move |_, _| crate::links::open(&crate::links::Target::Url(url.clone())))))
                     .child(install),
             )
-            .child(div().text_size(z(13.0)).line_height(z(19.0)).text_color(c("muted")).child(if r.description.is_empty() { i18n::t("settings.mods_no_description") } else { r.description.clone() }))
+            .child(div().text_size(z(13.0)).line_height(z(19.0)).text_color(tone("muted")).child(if r.description.is_empty() { i18n::t("settings.mods_no_description") } else { r.description.clone() }))
             .child(div().w_full().flex().flex_col().gap(z(4.0)).pt(z(4.0)).children(facts.into_iter().map(|(k, v)| {
-                div().w_full().flex().flex_row().gap(z(10.0)).child(div().w(z(90.0)).flex_none().text_size(z(12.0)).text_color(c("dim")).child(k)).child(div().flex_1().min_w_0().truncate().text_size(z(12.0)).text_color(c("foreground")).child(v))
+                div().w_full().flex().flex_row().gap(z(10.0)).child(div().w(z(90.0)).flex_none().text_size(z(12.0)).text_color(tone("dim")).child(k)).child(div().flex_1().min_w_0().truncate().text_size(z(12.0)).text_color(c("foreground")).child(v))
             })))
-            .child(div().text_size(z(12.0)).line_height(z(17.0)).text_color(c("dim")).child(i18n::t("settings.mods_trust_warning")));
+            .child(div().text_size(z(12.0)).line_height(z(17.0)).text_color(tone("dim")).child(i18n::t("settings.mods_trust_warning")));
         if incompatible {
-            info = info.child(div().text_size(z(12.5)).line_height(z(18.0)).text_color(c("blocked")).child(i18n::t("settings.mods_incompatible")));
+            info = info.child(div().text_size(z(12.5)).line_height(z(18.0)).text_color(tone("blocked")).child(i18n::t("settings.mods_incompatible")));
         }
         if self.mods.busy && self.mods.review.is_none() {
-            info = info.child(div().text_size(z(12.5)).text_color(c("muted")).child(i18n::t("settings.mods_installing")));
+            info = info.child(div().text_size(z(12.5)).text_color(tone("muted")).child(i18n::t("settings.mods_installing")));
         }
         if let (Some(e), false) = (&self.mods.install_error, self.mods.busy) {
-            info = info.child(div().text_size(z(12.5)).line_height(z(18.0)).text_color(c("blocked")).child(e.clone()));
+            info = info.child(div().text_size(z(12.5)).line_height(z(18.0)).text_color(tone("blocked")).child(e.clone()));
         }
         if self.mods.review.is_some() {
             info = info.child(self.review_panel(cx));
@@ -809,7 +809,7 @@ impl SettingsView {
             None => (Vec::new(), None),
         };
         match self.mods.sort {
-            Sort::Stars => rows.sort_by(|a, b| b.stargazers_count.cmp(&a.stargazers_count)),
+            Sort::Stars => rows.sort_by_key(|r| std::cmp::Reverse(r.stargazers_count)),
             Sort::Recent => rows.sort_by(|a, b| b.pushed_at.cmp(&a.pushed_at)),
         }
         let loaded = matches!(self.mods.found.get(kind), Some(Ok(_)));
@@ -836,13 +836,13 @@ impl SettingsView {
                     .child(self.seg(cx, "mods-sort", sorts, self.mods.sort, |this, v| this.mods.sort = v)),
             );
         if !loaded && error.is_none() {
-            page = page.child(div().text_size(z(12.5)).text_color(c("dim")).child("\u{2026}"));
+            page = page.child(div().text_size(z(12.5)).text_color(tone("dim")).child("\u{2026}"));
         }
         if let Some(e) = &error {
-            page = page.child(div().text_size(z(12.5)).text_color(c("blocked")).child(i18n::t(&e.key)));
+            page = page.child(div().text_size(z(12.5)).text_color(tone("blocked")).child(i18n::t(&e.key)));
         }
         if loaded && rows.is_empty() {
-            page = page.child(div().text_size(z(12.5)).text_color(c("dim")).child(i18n::t("settings.mods_no_results")));
+            page = page.child(div().text_size(z(12.5)).text_color(tone("dim")).child(i18n::t("settings.mods_no_results")));
         }
         let mut grid = div().w_full().flex().flex_row().flex_wrap().items_start().gap(z(12.0));
         for (i, r) in rows.into_iter().enumerate() {
@@ -858,7 +858,7 @@ impl SettingsView {
             let thumb: AnyElement = if self.preview_ok(&r.full_name) {
                 img(cache.join(format!("{owner}__{repo}.png"))).w_full().h(z(108.0)).object_fit(gpui::ObjectFit::Cover).into_any_element()
             } else {
-                svg().data(include_bytes!("../../../assets/icons/settings/puzzle.svg")).size(z(28.0)).text_color(c("dim")).into_any_element()
+                svg().data(include_bytes!("../../../assets/icons/settings/puzzle.svg")).size(z(28.0)).text_color(tone("dim")).into_any_element()
             };
             let avatar = div().w(z(28.0)).h(z(28.0)).flex_none().rounded(z(8.0)).bg(c("raised")).overflow_hidden().when(self.preview_ok(&format!("avatar:{owner}")), |d| d.child(img(cache.join(format!("avatar-{owner}.png"))).size(z(28.0))));
             let entry = r.clone();
@@ -904,14 +904,14 @@ impl SettingsView {
                                             .flex_row()
                                             .items_center()
                                             .gap(z(6.0))
-                                            .child(div().truncate().text_size(z(13.0)).font_weight(FontWeight::SEMIBOLD).text_color(c("foreground")).child(repo.clone()))
+                                            .child(div().id("mod-repo").truncate().text_size(z(13.0)).font_weight(FontWeight::SEMIBOLD).text_color(c("foreground")).tooltip(crate::window::native::tip(repo.to_string())).child(repo.clone()))
                                             .when(have.contains(&r.full_name.to_lowercase()), |d| d.child(badge(i18n::t("settings.mods_installed"), false))),
                                     )
-                                    .child(div().truncate().text_size(z(11.5)).text_color(c("dim")).child(sub)),
+                                    .child(div().id("mod-sub").truncate().text_size(z(11.5)).text_color(tone("dim")).tooltip(crate::window::native::tip(sub.to_string())).child(sub)),
                             )
-                            .child(div().flex_none().text_size(z(11.0)).text_color(c("muted")).child(format!("\u{2605} {}", r.stargazers_count))),
+                            .child(div().flex_none().text_size(z(11.0)).text_color(tone("muted")).child(format!("\u{2605} {}", r.stargazers_count))),
                     )
-                    .child(div().px(z(10.0)).h(z(36.0)).flex_none().overflow_hidden().text_size(z(11.0)).line_height(z(15.0)).text_color(c("muted")).child(r.description.clone())),
+                    .child(div().px(z(10.0)).h(z(36.0)).flex_none().overflow_hidden().text_size(z(11.0)).line_height(z(15.0)).text_color(tone("muted")).child(r.description.clone())),
             );
         }
         page.child(grid)
@@ -937,17 +937,17 @@ impl SettingsView {
                 .items_center()
                 .gap(z(10.0))
                 .child(self.seg(cx, "mods-tab", tabs, self.mods.tab, |this, v| this.mods.tab = v))
-                .when(installed_tab && !list.is_empty(), |d| d.child(div().text_size(z(12.0)).text_color(c("dim")).child(i18n::tf("settings.mods_count", &[("count", &list.len().to_string())])))),
+                .when(installed_tab && !list.is_empty(), |d| d.child(div().text_size(z(12.0)).text_color(tone("dim")).child(i18n::tf("settings.mods_count", &[("count", &list.len().to_string())])))),
         );
         page = page.child(self.install_box(window, cx));
         if self.mods.review.is_some() && !detail {
             page = page.child(self.review_panel(cx));
         }
         if self.mods.busy && self.mods.review.is_none() && !detail {
-            page = page.child(div().text_size(z(12.5)).text_color(c("dim")).child(i18n::t("settings.mods_installing")));
+            page = page.child(div().text_size(z(12.5)).text_color(tone("dim")).child(i18n::t("settings.mods_installing")));
         }
         if let (Some(e), false, false) = (&self.mods.install_error, self.mods.busy, detail) {
-            page = page.child(div().text_size(z(12.5)).line_height(z(18.0)).text_color(c("blocked")).child(e.clone()));
+            page = page.child(div().text_size(z(12.5)).line_height(z(18.0)).text_color(tone("blocked")).child(e.clone()));
         }
         if !installed_tab {
             return page.child(self.explore(window, cx));
@@ -979,7 +979,7 @@ impl SettingsView {
                     .flex_col()
                     .gap(z(8.0))
                     .items_start()
-                    .child(div().text_size(z(12.5)).text_color(c("dim")).child(i18n::t("settings.mods_empty_installed")))
+                    .child(div().text_size(z(12.5)).text_color(tone("dim")).child(i18n::t("settings.mods_empty_installed")))
                     .child(button("st-mod-explore", i18n::t("settings.mods_tab_explore"), self.act(cx, |this, _, _| this.mods.tab = Tab::Explore))),
             );
         } else if !list.is_empty() && shown.is_empty() {
@@ -990,7 +990,7 @@ impl SettingsView {
                     .flex_col()
                     .gap(z(8.0))
                     .items_start()
-                    .child(div().text_size(z(12.5)).text_color(c("dim")).child(i18n::t("settings.mods_no_results")))
+                    .child(div().text_size(z(12.5)).text_color(tone("dim")).child(i18n::t("settings.mods_no_results")))
                     .child(button("st-mod-clear", i18n::t("settings.mods_clear_search"), self.act(cx, |this, w, cx| {
                         this.mods.filter = Filter::All;
                         this.mods.iq.clear();
@@ -1012,7 +1012,7 @@ impl SettingsView {
             for m in &bundled {
                 col = col.child(self.card(m, index(m), cx));
             }
-            page = page.child(div().pt(z(12.0)).text_size(z(12.5)).font_weight(FontWeight::MEDIUM).text_color(c("muted")).child(i18n::t("settings.mods_bundled"))).child(col);
+            page = page.child(div().pt(z(12.0)).text_size(z(12.5)).font_weight(FontWeight::MEDIUM).text_color(tone("muted")).child(i18n::t("settings.mods_bundled"))).child(col);
         }
         page
     }

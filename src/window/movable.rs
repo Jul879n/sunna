@@ -21,6 +21,11 @@ pub struct WinDrag {
     moving: bool,
 }
 
+/// The left edge of a window of `width` centered between `left` and `right`; never left of `left`.
+fn centered(left: Pixels, right: Pixels, width: Pixels) -> Pixels {
+    (left + (right - left - width) / 2.0).max(left)
+}
+
 // ---- windows.json: spots by key, and the kept windows of each layout
 
 fn path() -> PathBuf {
@@ -86,13 +91,23 @@ impl AppWindow {
 
     /// A window at its spot: where it was dropped, else centered once its size
     /// is known (it stays invisible until then), always partly on screen.
+    /// The right edge of the shown sidebar (0 when it is hidden or not measured yet).
+    fn sidebar_right(&self) -> Pixels {
+        let shown = self.chrome.find("sidebar").is_some_and(|n| !n.hidden);
+        self.bounds.borrow().get("sidebar").filter(|_| shown).map_or(px(0.0), |b| b.right())
+    }
+
     pub(super) fn render_window(&self, o: &Overlay, body: Stateful<Div>, viewport: Size<Pixels>, cx: &mut Context<Self>) -> AnyElement {
         let measured = self.bounds.borrow().get(&o.slot).map(|b| b.size);
         let size = measured.unwrap_or_default();
         let at = match (&self.win_drag, o.place) {
             (Some(d), _) if d.id == o.id && d.moving => d.pointer - d.grab,
             (_, Some(p)) => p,
-            _ => point((viewport.width - size.width) / 2.0, (viewport.height - size.height) / 2.0),
+            _ => {
+                // The floating terminal opens centered on the work area (right of the sidebar), not over the sidebar.
+                let left = if o.id == super::floatterm::ID { self.sidebar_right() } else { px(0.0) };
+                point(centered(left, viewport.width, size.width), (viewport.height - size.height) / 2.0)
+            }
         };
         let keep = px(KEEP_SHOWN);
         let x = at.x.min(viewport.width - keep).max(keep - size.width);
@@ -209,5 +224,19 @@ impl AppWindow {
             .size_full()
             .into_any_element(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    // `super::*` brings in gpui's own `test` attribute, which would shadow the standard one.
+    use std::prelude::v1::test;
+
+    #[test]
+    fn a_window_centers_on_the_work_area_and_never_goes_under_the_sidebar() {
+        assert_eq!(centered(px(0.0), px(1000.0), px(600.0)), px(200.0));
+        assert_eq!(centered(px(240.0), px(1000.0), px(600.0)), px(320.0));
+        assert_eq!(centered(px(240.0), px(1000.0), px(900.0)), px(240.0));
     }
 }

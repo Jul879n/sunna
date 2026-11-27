@@ -91,6 +91,10 @@ pub fn num(n: f64) -> Value {
 /// them, so a missing value always means "as before").
 pub fn shared_default(key: &str) -> Value {
     match key {
+        "cleanup.auto" | "cleanup.unchanged" | "cleanup.bots" => json!(false),
+        "cleanup.merged" => json!(true),
+        "cleanup.every_hours" => json!(24),
+        "cleanup.unchanged_days" => json!(1),
         "space.card" => json!({ "git": true, "ago": true, "agents": true }),
         "space.branch_names" | "worktree.fresh" => json!(false),
         "sidebar.buttons" => json!({ "search": true, "bots": true }),
@@ -155,7 +159,8 @@ mod tests {
     #[test]
     fn every_shared_key_has_a_default() {
         for key in ["space.card", "space.branch_names", "sidebar.buttons", "status.items", "status.format", "tabs.order", "files.ignored", "files.open",
-            "menu.open_in", "worktree.nest", "worktree.external", "worktree.prefix_mode", "worktree.prefix", "worktree.template", "worktree.fresh", "changes.base", "changes.groups"]
+            "menu.open_in", "worktree.nest", "worktree.external", "worktree.prefix_mode", "worktree.prefix", "worktree.template", "worktree.fresh", "changes.base", "changes.groups",
+            "cleanup.auto", "cleanup.merged", "cleanup.unchanged", "cleanup.bots", "cleanup.every_hours", "cleanup.unchanged_days"]
         {
             assert_ne!(shared_default(key), Value::Null, "{key}");
         }

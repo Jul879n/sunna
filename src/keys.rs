@@ -45,6 +45,7 @@ const SHIPPED_KEYS: &[&str] = &[
     include_str!("keys/shipped/v0.1.16b-keys.json"),
     include_str!("keys/shipped/v0.1.16c-keys.json"),
     include_str!("keys/shipped/v0.1.16d-keys.json"),
+    include_str!("keys/shipped/v0.1.16e-keys.json"),
 ];
 #[cfg(any(target_os = "macos", test))]
 const SHIPPED_MACOS_KEYS: &[&str] = &[
@@ -56,6 +57,7 @@ const SHIPPED_MACOS_KEYS: &[&str] = &[
     include_str!("keys/shipped/v0.1.16b-keys.macos.json"),
     include_str!("keys/shipped/v0.1.16c-keys.macos.json"),
     include_str!("keys/shipped/v0.1.16d-keys.macos.json"),
+    include_str!("keys/shipped/v0.1.16e-keys.macos.json"),
 ];
 
 #[derive(serde::Deserialize)]

@@ -169,6 +169,8 @@ struct Shared {
     size: GhosttySizeReportSize,
     held_since: Option<Instant>,
     title_changed: bool,
+    /// BELs (0x07) received since `take_bell`.
+    bells: u32,
     /// Replies the terminal writes back to the program (e.g. kitty graphics acks).
     replies: Vec<u8>,
     clipboard_write: bool,
@@ -660,6 +662,11 @@ unsafe extern "C" fn on_size(_t: GhosttyTerminal, userdata: *mut c_void, out: *m
     true
 }
 
+unsafe extern "C" fn on_bell(_t: GhosttyTerminal, userdata: *mut c_void) {
+    let shared = unsafe { &mut *(userdata as *mut Shared) };
+    shared.bells = shared.bells.saturating_add(1);
+}
+
 unsafe extern "C" fn on_title(_t: GhosttyTerminal, userdata: *mut c_void) {
     let shared = unsafe { &mut *(userdata as *mut Shared) };
     shared.title_changed = true;
@@ -699,13 +706,15 @@ impl Vt {
             ok(ghostty_mouse_event_new(std::ptr::null(), &mut mouse_event), "mouse_event_new");
 
             install_png_decoder();
-            let mut shared = Box::new(Shared { state, size: GhosttySizeReportSize { rows: rows.max(1), columns: cols.max(1), cell_width: 0, cell_height: 0 }, held_since: None, title_changed: false, replies: Vec::new(), clipboard_write: true, clipboard: [None, None] });
+            let mut shared = Box::new(Shared { state, size: GhosttySizeReportSize { rows: rows.max(1), columns: cols.max(1), cell_width: 0, cell_height: 0 }, held_since: None, title_changed: false, bells: 0, replies: Vec::new(), clipboard_write: true, clipboard: [None, None] });
             let ud = &mut *shared as *mut Shared as *const c_void;
             ghostty_terminal_set(term, GHOSTTY_TERMINAL_OPT_USERDATA, ud);
             let hold: GhosttyTerminalRenderHoldFn = Some(on_render_hold);
             ghostty_terminal_set(term, GHOSTTY_TERMINAL_OPT_RENDER_HOLD, std::mem::transmute(hold));
             let title: GhosttyTerminalTitleChangedFn = Some(on_title);
             ghostty_terminal_set(term, GHOSTTY_TERMINAL_OPT_TITLE_CHANGED, std::mem::transmute(title));
+            let bell: GhosttyTerminalBellFn = Some(on_bell);
+            ghostty_terminal_set(term, GHOSTTY_TERMINAL_OPT_BELL, std::mem::transmute(bell));
             let size: GhosttyTerminalSizeFn = Some(on_size);
             ghostty_terminal_set(term, GHOSTTY_TERMINAL_OPT_SIZE, std::mem::transmute(size));
             let write: GhosttyTerminalWritePtyFn = Some(on_write_pty);
@@ -1382,6 +1391,11 @@ impl Vt {
         self.shared.size = GhosttySizeReportSize { rows, columns: cols, cell_width: cell_w.max(1), cell_height: cell_h.max(1) };
         unsafe { ghostty_terminal_resize(self.term, cols, rows, cell_w.max(1), cell_h.max(1)) };
         self.feed_search();
+    }
+
+    /// Whether the program rang the bell (BEL) since the last call.
+    pub fn take_bell(&mut self) -> bool {
+        std::mem::take(&mut self.shared.bells) > 0
     }
 
     pub fn take_title(&mut self) -> Option<String> {
@@ -2894,6 +2908,19 @@ mod tests {
         vt.write(b"\x1b]52;p;\x1b\\");
         let expected = if cfg!(target_os = "linux") { Some(String::new()) } else { None };
         assert_eq!(vt.take_clipboard(), [None, expected]);
+    }
+
+    #[test]
+    fn the_bell_is_reported_once_and_an_osc_terminator_is_not_one() {
+        let mut vt = Vt::new(20, 3);
+        assert!(!vt.take_bell());
+        vt.write(b"hi\x07");
+        assert!(vt.take_bell());
+        assert!(!vt.take_bell());
+        vt.write(b"\x07\x07");
+        assert!(vt.take_bell());
+        vt.write(b"\x1b]2;title\x07");
+        assert!(!vt.take_bell(), "BEL ending a title is not a bell");
     }
 
     #[test]

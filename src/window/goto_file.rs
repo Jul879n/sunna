@@ -4,6 +4,7 @@
 //! (`file.open`), Esc closes. The tab/agent selector is the "Go to space or tab"
 //! entry of the palette and Cmd/Ctrl+Alt+P.
 
+use super::native::{tip, tone};
 use super::*;
 use crate::goto::{self, MAX_FILES, Row};
 use crate::i18n;
@@ -14,13 +15,14 @@ pub(super) const ID: &str = "goto-file";
 /// Rows shown at once; the list scrolls by keys.
 const SHOWN: usize = 10;
 const ROW_H: f32 = 32.0;
+const WIDTH: f32 = 640.0;
 const SEARCH_ICON: &[u8] = include_bytes!("../../assets/icons/goto/search.svg");
 const FILE_ICON: &[u8] = include_bytes!("../../assets/icons/goto/file-text.svg");
 
 pub(super) struct GotoView {
     app: WeakEntity<AppWindow>,
     input: Entity<InputState>,
-    focus: FocusHandle,
+    focus: dialog::Focus,
     query: String,
     at: usize,
     first: usize,
@@ -37,7 +39,7 @@ impl GotoView {
     /// `place` is the folder and machine the focused pane is in.
     fn new(app: WeakEntity<AppWindow>, place: (Option<String>, Option<String>), window: &mut Window, cx: &mut Context<Self>) -> Self {
         let input = cx.new(|cx| InputState::new(window, cx).placeholder(i18n::t("rs.goto.placeholder")));
-        input.update(cx, |s, _| s.set_editor_style(settings_ui::controls::input_style()));
+        input.update(cx, |s, _| s.set_editor_style(dialog::input_style()));
         cx.subscribe_in(&input, window, |this, input, ev: &InputEvent, window, cx| match ev {
             InputEvent::Change => {
                 this.query = input.read(cx).value().to_string();
@@ -53,7 +55,7 @@ impl GotoView {
         input.update(cx, |s, cx| s.focus(window, cx));
         let (cwd, on) = place;
         let mut this = Self {
-            app, input, focus: cx.focus_handle(), query: String::new(), at: 0, first: 0, files: None, error: None, root: None, on: on.clone(), recent: Vec::new(), rows: Vec::new(),
+            app, input, focus: dialog::Focus::new(cx), query: String::new(), at: 0, first: 0, files: None, error: None, root: None, on: on.clone(), recent: Vec::new(), rows: Vec::new(),
         };
         match cwd {
             None => {
@@ -122,7 +124,7 @@ impl GotoView {
 }
 
 impl Render for GotoView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let z = settings::z;
         self.at = self.at.min(self.rows.len().saturating_sub(1));
         if self.at < self.first {
@@ -133,7 +135,7 @@ impl Render for GotoView {
         }
         let empty = self.error.clone().unwrap_or_else(|| i18n::t(if self.files.is_some() { "rs.goto.empty" } else { "rs.goto.indexing" }));
         let list = if self.rows.is_empty() {
-            div().px(z(16.0)).py(z(14.0)).text_size(z(13.0)).text_color(c("dim")).child(empty)
+            div().px(z(16.0)).py(z(14.0)).text_size(z(13.0)).text_color(tone("muted")).child(empty)
         } else {
             div().mb(z(6.0)).flex().flex_col().children(self.rows.iter().enumerate().skip(self.first).take(SHOWN).map(|(i, r)| {
                 let on = i == self.at;
@@ -153,61 +155,50 @@ impl Render for GotoView {
                     .when(on, |d| d.bg(c("selected")))
                     .hover(|s| s.bg(c("hover")))
                     .on_click(cx.listener(move |this, _, w, cx| this.open(i, w, cx)))
-                    .child(svg().data(FILE_ICON).size(z(14.0)).text_color(c("dim")))
-                    .child(div().flex_none().max_w(z(320.0)).truncate().text_color(c(if on { "foreground" } else { "muted" })).child(Self::text(&r.name, &r.name_hits)))
-                    .child(div().flex_1().min_w_0().truncate().text_size(z(11.5)).text_color(c("dim")).child(Self::text(&r.dir, &r.dir_hits)))
+                    .child(svg().data(FILE_ICON).size(z(14.0)).text_color(tone("muted")))
+                    .child(div().id("goto-name").flex_none().max_w(z(320.0)).truncate().tooltip(tip(r.name.to_string())).text_color(tone(if on { "foreground" } else { "muted" })).child(Self::text(&r.name, &r.name_hits)))
+                    .child(div().id("goto-dir").flex_1().min_w_0().truncate().tooltip(tip(r.dir.to_string())).text_size(z(12.0)).text_color(tone("muted")).child(Self::text(&r.dir, &r.dir_hits)))
             }))
         };
-        div()
-            .id("goto-file")
-            .track_focus(&self.focus)
-            .w_full()
-            .min_h_0()
-            .p(z(18.0))
+        let this = cx.entity();
+        let close = move |w: &mut Window, cx: &mut App| this.update(cx, |v, cx| v.close(w, cx));
+        let focused = self.input.read(cx).focus_handle(cx).is_focused(window);
+        let search = dialog::field_box(focused, false)
+            .flex_none()
+            .gap(z(10.0))
+            .child(svg().data(SEARCH_ICON).size(z(16.0)).text_color(tone("dim")))
+            .child(div().flex_1().h_full().child(Input::new(&self.input)));
+        let body = div()
             .flex()
             .flex_col()
             .gap(z(10.0))
-            .on_key_down(cx.listener(|this, e: &KeyDownEvent, w, cx| {
-                let last = this.rows.len().saturating_sub(1);
-                match e.keystroke.key.as_str() {
-                    "escape" => return this.close(w, cx),
-                    "down" => this.at = (this.at + 1).min(last),
-                    "up" => this.at = this.at.saturating_sub(1),
-                    "pagedown" => this.at = (this.at + SHOWN).min(last),
-                    "pageup" => this.at = this.at.saturating_sub(SHOWN),
-                    _ => return,
-                }
-                cx.stop_propagation();
-                cx.notify();
-            }))
-            .child(
-                div()
-                    .h(z(36.0))
-                    .flex_none()
-                    .px(z(10.0))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(z(10.0))
-                    .rounded(z(9.0))
-                    .border_1()
-                    .border_color(c("accent"))
-                    .bg(c("background"))
-                    .child(svg().data(SEARCH_ICON).size(z(16.0)).text_color(c("dim")))
-                    .child(div().flex_1().h_full().text_size(z(12.8)).text_color(c("foreground")).child(Input::new(&self.input)))
-                    .child(div().text_size(z(11.0)).text_color(c("dim")).child("Esc")),
-            )
+            .child(search)
             .child(list)
             .when(self.files.as_ref().is_some_and(|f| f.len() >= MAX_FILES), |d| {
-                d.child(div().px(z(6.0)).text_size(z(11.0)).text_color(c("dim")).child(i18n::t("rs.goto.truncated")))
-            })
+                d.child(div().text_size(z(12.0)).text_color(tone("muted")).child(i18n::t("rs.goto.truncated")))
+            });
+        let card = dialog::Dialog::new(i18n::t("rs.goto.title"), &self.focus, close).width(WIDTH).no_cancel().fields(1).body(body).render("goto-file");
+        // Up/Down/Page keys move the list cursor; Esc and Tab are the dialog's own.
+        div().on_key_down(cx.listener(|this, e: &KeyDownEvent, w, cx| {
+            let last = this.rows.len().saturating_sub(1);
+            match e.keystroke.key.as_str() {
+                "down" => this.at = (this.at + 1).min(last),
+                "up" => this.at = this.at.saturating_sub(1),
+                "pagedown" => this.at = (this.at + SHOWN).min(last),
+                "pageup" => this.at = this.at.saturating_sub(SHOWN),
+                _ => return,
+            }
+            let _ = w;
+            cx.stop_propagation();
+            cx.notify();
+        })).child(card)
     }
 }
 
 impl AppWindow {
     /// The folder and machine of the focused pane, the way the Files, Changes and Search
     /// panels read them: its terminal's folder, else the space's.
-    fn goto_place(&self) -> (Option<String>, Option<String>) {
+    pub(super) fn goto_place(&self) -> (Option<String>, Option<String>) {
         let space = self.model.active_space();
         let block = overlay_terminal_block(&self.overlays, self.window_terminal.as_deref()).or_else(|| terminal_block(&self.chrome, self.focused_pane.as_deref()));
         let (own, on) = match block.and_then(|b| b.terminal()) {
@@ -231,6 +222,9 @@ impl AppWindow {
         let app = cx.weak_entity();
         let view = cx.new(|cx| GotoView::new(app, place, window, cx));
         let focus = cx.focus_handle();
-        self.push_view_overlay(ID.into(), OverlayKind::Popup, size(640.0, 0.6), Some(40.0), view.into(), focus, cx);
+        self.push_view_overlay(ID.into(), OverlayKind::Popup, size(WIDTH + 48.0, 0.8), Some(16.0), view.into(), focus, window, cx);
+        if let Some(o) = self.overlays.iter_mut().find(|o| o.id == ID) {
+            o.bare = true;
+        }
     }
 }

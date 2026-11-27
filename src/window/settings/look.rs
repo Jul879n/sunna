@@ -252,7 +252,7 @@ impl SettingsView {
                     .child(button("st-imp-close", i18n::t("settings.cancel"), Self::act_on(&me, |this, _, _| this.look.importing = None))),
             );
         if shown.is_empty() {
-            out = out.child(div().text_size(z(12.5)).text_color(c("muted")).child(i18n::t("settings.import_nothing_found")));
+            out = out.child(div().text_size(z(12.5)).text_color(tone("muted")).child(i18n::t("settings.import_nothing_found")));
         }
         for (i, (source, files)) in shown.into_iter().enumerate() {
             let mut chips = div().flex().flex_row().flex_wrap().gap(z(6.0));
@@ -283,7 +283,7 @@ impl SettingsView {
                         .child(name.rsplit_once('.').map_or(name.as_str(), |(s, _)| s).to_owned()),
                 );
             }
-            out = out.child(div().flex().flex_col().gap(z(4.0)).child(div().text_size(z(12.0)).font_weight(FontWeight::MEDIUM).text_color(c("muted")).child(source.label.clone())).child(chips));
+            out = out.child(div().flex().flex_col().gap(z(4.0)).child(div().text_size(z(12.0)).font_weight(FontWeight::MEDIUM).text_color(tone("muted")).child(source.label.clone())).child(chips));
         }
         out
     }
@@ -344,7 +344,7 @@ impl SettingsView {
         let light = self.theme_picker(true, cx);
         let ui_font = self.font_row("ui_font", i18n::t("settings.interface_font"), ui_own.then(|| i18n::t("settings.this_layout_sets_its_own")), s.ui_font_family.clone(), DEFAULT_UI_FONT, None::<Size>, cx);
         let sidebar = self.sidebar(cx);
-        let sub = |t: String, top: f32| div().pt(z(top)).pb(z(6.0)).text_size(z(12.5)).font_weight(FontWeight::MEDIUM).text_color(c("muted")).child(t);
+        let sub = |t: String, top: f32| div().pt(z(top)).pb(z(6.0)).text_size(z(12.5)).font_weight(FontWeight::MEDIUM).text_color(tone("muted")).child(t);
         let flag = |this: &Self, cx: &mut Context<Self>, id: &'static str, key: &'static str, field: &'static str, title: &str, about: Option<String>| row(title.to_owned(), about, this.object_switch(cx, id, key, field));
         let mut page = div()
             .w_full()
@@ -354,7 +354,7 @@ impl SettingsView {
             .child(controls::heading(i18n::t("settings.theme")))
             .child(tools)
             .child(row(i18n::t("settings.appearance"), Some(i18n::t("settings.light_or_dark_or_as")), appearance_pick))
-            .child(div().pt(z(12.0)).pb(z(8.0)).text_size(z(12.5)).text_color(c("muted")).child(i18n::t("settings.for_the_layout_you_re_in")))
+            .child(div().pt(z(12.0)).pb(z(8.0)).text_size(z(12.5)).text_color(tone("muted")).child(i18n::t("settings.for_the_layout_you_re_in")))
             .child(sub(i18n::t("settings.dark"), 0.0))
             .child(dark)
             .child(sub(i18n::t("settings.light"), 10.0))
@@ -394,6 +394,11 @@ impl SettingsView {
                 self.shared_pick(cx, "tabs-order", "tabs.order", &[("strip", "settings.orca_order_strip"), ("recent", "settings.orca_order_recent")]),
             ))
             .child(row(i18n::t("settings.orca_ignored"), Some(i18n::t("settings.orca_ignored_about")), self.shared_switch(cx, "st-files-ignored", "files.ignored")))
+            .child(controls::gap())
+            .child(controls::heading(i18n::t("settings.window_heading")))
+            .child(self.flag_row(cx, "st-reduce-effects", "reduce_effects", i18n::t("settings.reduce_effects"), i18n::t("settings.reduce_effects_about"), s.reduce_effects, false))
+            .children(cfg!(target_os = "macos").then(|| self.flag_row(cx, "st-app-name", "show_app_name", i18n::t("settings.app_name"), i18n::t("settings.app_name_about"), s.show_app_name, false)))
+            .child(controls::note(i18n::t("settings.window_limits")))
     }
 }
 

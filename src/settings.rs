@@ -443,6 +443,22 @@ fn resolve(p: &Palette, overrides: &BTreeMap<String, String>) -> Theme {
     t
 }
 
+/// Every theme the app ships (the four presets and `defaults/themes/*.json`) resolved as the app does, for the tests
+/// that check colors against all of them.
+#[cfg(test)]
+pub(crate) fn shipped_themes_resolved() -> Vec<(String, Theme)> {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("defaults/themes");
+    let mut out: Vec<(String, Theme)> = PRESETS.iter().map(|n| (n.to_string(), resolve(preset(n).unwrap(), &BTreeMap::new()))).collect();
+    let mut files: Vec<_> = std::fs::read_dir(dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
+    files.sort();
+    for path in files {
+        let name = path.file_stem().unwrap().to_string_lossy().into_owned();
+        let (p, o, _) = parse_theme_file(&name, &std::fs::read_to_string(&path).unwrap()).unwrap();
+        out.push((name, resolve(&p, &o)));
+    }
+    out
+}
+
 /// settings.json: preferences used where a layout leaves its look unset.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -505,6 +521,45 @@ pub struct Person {
     /// Typing in a terminal scrolls it back to the bottom.
     #[serde(skip_serializing_if = "is_true")]
     pub scroll_on_input: bool,
+    /// Draw the cursor in this shape whatever the program asks for. Absent: the program's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor_shape: Option<CursorPref>,
+    /// The cursor of the terminal with the keyboard blinks.
+    #[serde(skip_serializing_if = "is_false")]
+    pub cursor_blink: bool,
+    /// 0.1..1: how solid the cursor is drawn.
+    #[serde(skip_serializing_if = "is_one")]
+    pub cursor_opacity: f32,
+    /// 0.3..1: below 1, a terminal pane without the keyboard fades toward its background (only when a tab has several panes).
+    #[serde(skip_serializing_if = "is_one")]
+    pub inactive_pane_opacity: f32,
+    /// Gap between split panes, px (0..16). Absent: the layout's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub divider_width: Option<f32>,
+    /// Moving the pointer over a terminal pane gives it the keyboard.
+    #[serde(skip_serializing_if = "is_false")]
+    pub focus_follows_mouse: bool,
+    /// Typing in a terminal hides the pointer until it moves (macOS).
+    #[serde(skip_serializing_if = "is_false")]
+    pub hide_mouse_on_type: bool,
+    /// Closing a tab or pane whose terminal runs a program asks first.
+    #[serde(skip_serializing_if = "is_false")]
+    pub confirm_close_running: bool,
+    /// The program new terminals start (the app's own launches), when it isn't the login shell.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shell: Option<String>,
+    /// Middle click pastes (Linux: the selection; macOS and Windows: the clipboard). Absent: on except on macOS.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub middle_click_paste: Option<bool>,
+    /// Copying removes the indent every line of the selection shares.
+    #[serde(skip_serializing_if = "is_false")]
+    pub trim_copy_margin: bool,
+    /// No shadows, window blur or translucent terminals.
+    #[serde(skip_serializing_if = "is_false")]
+    pub reduce_effects: bool,
+    /// The app's name in the window's title strip (macOS).
+    #[serde(skip_serializing_if = "is_false")]
+    pub show_app_name: bool,
     /// Which agent alerts show a toast and play their sound.
     #[serde(skip_serializing_if = "Notifications::is_default")]
     pub notifications: Notifications,
@@ -560,6 +615,26 @@ fn is_true(b: &bool) -> bool {
     *b
 }
 
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
+fn is_one(v: &f32) -> bool {
+    (*v - 1.0).abs() < f32::EPSILON
+}
+
+/// The cursor shape a person picked in place of the program's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CursorPref {
+    Block,
+    Bar,
+    Underline,
+}
+
+/// Middle-click paste as it is without a setting: everywhere but macOS, which has no PRIMARY selection.
+pub const MIDDLE_PASTE_DEFAULT: bool = !cfg!(target_os = "macos");
+
 impl Default for Person {
     fn default() -> Self {
         Person {
@@ -585,6 +660,19 @@ impl Default for Person {
             terminal_padding: None,
             terminal_opacity: None,
             scroll_on_input: true,
+            cursor_shape: None,
+            cursor_blink: false,
+            cursor_opacity: 1.0,
+            inactive_pane_opacity: 1.0,
+            divider_width: None,
+            focus_follows_mouse: false,
+            hide_mouse_on_type: false,
+            confirm_close_running: false,
+            shell: None,
+            middle_click_paste: None,
+            trim_copy_margin: false,
+            reduce_effects: false,
+            show_app_name: false,
             notifications: Notifications::default(),
             minimum_contrast: None,
             option_as_alt: OptionAsAlt::Auto,
@@ -631,6 +719,20 @@ pub struct Settings {
     /// 0..1: below 1, what's behind a terminal shows through.
     pub terminal_opacity: f32,
     pub scroll_on_input: bool,
+    pub cursor_shape: Option<CursorPref>,
+    pub cursor_blink: bool,
+    pub cursor_opacity: f32,
+    pub inactive_pane_opacity: f32,
+    /// Gap between split panes in px; None: the layout's.
+    pub divider_width: Option<f32>,
+    pub focus_follows_mouse: bool,
+    pub hide_mouse_on_type: bool,
+    pub confirm_close_running: bool,
+    pub shell: Option<String>,
+    pub middle_click_paste: bool,
+    pub trim_copy_margin: bool,
+    pub reduce_effects: bool,
+    pub show_app_name: bool,
     pub notifications: Notifications,
     pub clipboard_write: bool,
     pub copy_on_select: bool,
@@ -691,17 +793,26 @@ pub struct Notifications {
     pub enabled: bool,
     pub done: bool,
     pub blocked: bool,
+    /// A terminal's bell (BEL) raises a toast and the "needs you" sound.
+    pub bell: bool,
+    /// No toast for what is on screen in the window in front (the sound still plays). Off: it shows anyway.
+    pub suppress_when_focused: bool,
 }
 
 impl Default for Notifications {
     fn default() -> Self {
-        Notifications { enabled: true, done: true, blocked: true }
+        Notifications { enabled: true, done: true, blocked: true, bell: false, suppress_when_focused: true }
     }
 }
 
 impl Notifications {
     pub fn is_default(&self) -> bool {
         *self == Notifications::default()
+    }
+
+    /// Whether a terminal's bell is raised: asked for, notifications on, and not for what is in front unless that is wanted.
+    pub fn rings_for_bell(&self, looking: bool) -> bool {
+        self.enabled && self.bell && !(looking && self.suppress_when_focused)
     }
 
     /// Whether an alert of this kind is raised at all (sound and toast).
@@ -738,6 +849,19 @@ impl Default for Settings {
             terminal_padding: [10.0, 6.0],
             terminal_opacity: 1.0,
             scroll_on_input: true,
+            cursor_shape: None,
+            cursor_blink: false,
+            cursor_opacity: 1.0,
+            inactive_pane_opacity: 1.0,
+            divider_width: None,
+            focus_follows_mouse: false,
+            hide_mouse_on_type: false,
+            confirm_close_running: false,
+            shell: None,
+            middle_click_paste: MIDDLE_PASTE_DEFAULT,
+            trim_copy_margin: false,
+            reduce_effects: false,
+            show_app_name: false,
             notifications: Notifications::default(),
             clipboard_write: true,
             copy_on_select: true,
@@ -786,8 +910,22 @@ impl Settings {
             pane_scrollbars: person.pane_scrollbars,
             // Unlike fonts, these two are set from Settings > Terminal on purpose: the person's own wins over the layout's.
             terminal_padding: person.terminal_padding.or(look.terminal_padding).unwrap_or(d.terminal_padding).map(|v| v.clamp(0.0, 64.0)),
-            terminal_opacity: person.terminal_opacity.or(look.terminal_opacity).unwrap_or(1.0).clamp(0.0, 1.0),
+            // Reduced effects: no translucent terminals.
+            terminal_opacity: if person.reduce_effects { 1.0 } else { person.terminal_opacity.or(look.terminal_opacity).unwrap_or(1.0).clamp(0.0, 1.0) },
             scroll_on_input: person.scroll_on_input,
+            cursor_shape: person.cursor_shape,
+            cursor_blink: person.cursor_blink,
+            cursor_opacity: person.cursor_opacity.clamp(0.1, 1.0),
+            inactive_pane_opacity: person.inactive_pane_opacity.clamp(0.3, 1.0),
+            divider_width: person.divider_width.map(|w| w.clamp(0.0, 16.0)),
+            focus_follows_mouse: person.focus_follows_mouse,
+            hide_mouse_on_type: person.hide_mouse_on_type,
+            confirm_close_running: person.confirm_close_running,
+            shell: person.shell.clone().map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()),
+            middle_click_paste: person.middle_click_paste.unwrap_or(MIDDLE_PASTE_DEFAULT),
+            trim_copy_margin: person.trim_copy_margin,
+            reduce_effects: person.reduce_effects,
+            show_app_name: person.show_app_name,
             notifications: person.notifications.clone(),
             sounds: person.sounds.clone(),
             language: crate::i18n::resolve(person.language.as_deref()).into(),
@@ -959,6 +1097,21 @@ fn theme_style_fonts_override() {
     let mut s = Settings::default();
     apply_style_fonts(&mut s, &UiStyle { ui_font: Some("Inter".into()), ..Default::default() });
     assert_eq!(s.ui_font_family, "Inter");
+}
+
+/// Tests only: shows a shipped theme (or a preset) on this thread without touching the disk.
+#[cfg(test)]
+pub fn show_theme_for_test(name: &str) {
+    let (p, mut colors, style) = match preset(name) {
+        Some(p) => (p.clone(), BTreeMap::new(), UiStyle::default()),
+        None => parse_theme_file(name, THEMES.iter().find(|(n, _)| *n == name).unwrap().1).unwrap(),
+    };
+    colors.extend(Settings::default().colors);
+    let theme = resolve(&p, &colors);
+    CURRENT.with(|c| {
+        let s = c.borrow().0.clone();
+        *c.borrow_mut() = (s, Rc::new(theme), Rc::new(style));
+    });
 }
 
 /// Installs new settings; returns whether anything changed.
@@ -1290,6 +1443,44 @@ mod tests {
     }
 
     #[test]
+    fn new_terminal_settings_keep_today_s_behavior_when_absent() {
+        let person: Person = serde_json::from_str("{}").unwrap();
+        let now = Settings::compose(&person, &crate::layout::Look::default(), true);
+        assert_eq!((now.cursor_shape, now.cursor_blink, now.cursor_opacity, now.inactive_pane_opacity, now.divider_width), (None, false, 1.0, 1.0, None));
+        assert!(!now.focus_follows_mouse && !now.hide_mouse_on_type && !now.confirm_close_running && !now.trim_copy_margin && !now.reduce_effects && !now.show_app_name);
+        assert_eq!((now.shell.clone(), now.middle_click_paste), (None, MIDDLE_PASTE_DEFAULT));
+        assert!(!now.notifications.bell && now.notifications.suppress_when_focused);
+        // Nothing new is written for a person who set none of them.
+        assert_eq!(serde_json::to_value(&person).unwrap().as_object().map(|o| o.contains_key("cursor_shape") || o.contains_key("shell") || o.contains_key("reduce_effects")), Some(false));
+        assert!(Notifications::default().is_default());
+    }
+
+    #[test]
+    fn the_bell_rings_only_when_asked_and_not_for_what_is_in_front() {
+        let off = Notifications::default();
+        assert!(!off.rings_for_bell(false), "off by default");
+        let on = Notifications { bell: true, ..Notifications::default() };
+        assert!(on.rings_for_bell(false) && !on.rings_for_bell(true));
+        let anyway = Notifications { bell: true, suppress_when_focused: false, ..Notifications::default() };
+        assert!(anyway.rings_for_bell(true));
+        assert!(!Notifications { enabled: false, ..anyway }.rings_for_bell(false));
+    }
+
+    #[test]
+    fn new_terminal_settings_are_read_clamped_and_composed() {
+        let person: Person = serde_json::from_str(r#"{"cursor_shape":"underline","cursor_blink":true,"cursor_opacity":0,"inactive_pane_opacity":0.1,"divider_width":40,"shell":"  /bin/zsh ","middle_click_paste":true,"reduce_effects":true,"terminal_opacity":0.5,"notifications":{"bell":true,"suppress_when_focused":false}}"#).unwrap();
+        let now = Settings::compose(&person, &crate::layout::Look::default(), true);
+        assert_eq!(now.cursor_shape, Some(CursorPref::Underline));
+        assert_eq!((now.cursor_opacity, now.inactive_pane_opacity, now.divider_width), (0.1, 0.3, Some(16.0)));
+        assert_eq!(now.shell.as_deref(), Some("/bin/zsh"));
+        assert!(now.middle_click_paste && now.cursor_blink);
+        assert_eq!(now.terminal_opacity, 1.0, "reduced effects keep terminals opaque");
+        assert!(now.notifications.bell && !now.notifications.suppress_when_focused && now.notifications.enabled);
+        let blank: Person = serde_json::from_str(r#"{"shell":"  "}"#).unwrap();
+        assert_eq!(Settings::compose(&blank, &crate::layout::Look::default(), true).shell, None);
+    }
+
+    #[test]
     fn shipped_looks_and_theme_clicks_have_the_same_precedence() {
         use crate::layout::{Node, ThemeChoice};
         let person = Person { font_size: Some(19.0), theme: Some(ThemeChoice::One("moss".into())), ..Person::default() };
@@ -1314,7 +1505,7 @@ mod tests {
     /// settings.json key.
     #[test]
     fn the_guide_explains_every_setting() {
-        let all = Person { language: Some(String::new()), keep_awake: crate::awake::Mode::On, resume_agents: false, yolo: Yolo { enabled: false, ..Yolo::default() }, core: Some(String::new()), font: Some(String::new()), font_size: Some(1.0), font_weight: Some(400), ui_font: Some(String::new()), telemetry: false, clipboard_write: false, copy_on_select: false, terminal_padding: Some([1.0, 1.0]), terminal_opacity: Some(1.0), scroll_on_input: false, notifications: Notifications { enabled: false, ..Notifications::default() }, appearance: Appearance::Light, theme: Some(crate::layout::ThemeChoice::One(String::new())), colors: [("text".into(), String::new())].into(), ..Person::default() };
+        let all = Person { language: Some(String::new()), keep_awake: crate::awake::Mode::On, resume_agents: false, yolo: Yolo { enabled: false, ..Yolo::default() }, core: Some(String::new()), font: Some(String::new()), font_size: Some(1.0), font_weight: Some(400), ui_font: Some(String::new()), telemetry: false, clipboard_write: false, copy_on_select: false, terminal_padding: Some([1.0, 1.0]), terminal_opacity: Some(1.0), scroll_on_input: false, cursor_shape: Some(CursorPref::Bar), cursor_blink: true, cursor_opacity: 0.5, inactive_pane_opacity: 0.5, divider_width: Some(2.0), focus_follows_mouse: true, hide_mouse_on_type: true, confirm_close_running: true, shell: Some(String::new()), middle_click_paste: Some(true), trim_copy_margin: true, reduce_effects: true, show_app_name: true, notifications: Notifications { enabled: false, ..Notifications::default() }, appearance: Appearance::Light, theme: Some(crate::layout::ThemeChoice::One(String::new())), colors: [("text".into(), String::new())].into(), ..Person::default() };
         let keys: Vec<String> = serde_json::to_value(&all).unwrap().as_object().unwrap().keys().cloned().collect();
         let guide = include_str!("../defaults/AGENTS.md");
         let section = guide.split("## The person").nth(1).and_then(|s| s.split("\n## ").next()).unwrap_or_default();

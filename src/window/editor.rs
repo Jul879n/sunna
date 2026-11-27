@@ -609,14 +609,14 @@ impl AppWindow {
 
     pub(super) fn render_editor(&self, id: &str, cx: &mut Context<Self>) -> AnyElement {
         let Some(e) = self.editors.get(id) else {
-            return div().size_full().bg(c("background")).into_any_element();
+            return div().size_full().bg(c("surface")).into_any_element();
         };
         let pane = id.to_owned();
         let button = |key: &str, label: String, primary: bool, on: Rc<dyn Fn(&mut AppWindow, &mut Window, &mut Context<AppWindow>)>, cx: &mut Context<Self>| {
             div()
                 .id(SharedString::from(format!("{key}-{id}")))
-                .h(px(24.0))
-                .px(px(9.0))
+                .h(settings::z(32.0))
+                .px(settings::z(10.0))
                 .flex()
                 .items_center()
                 .flex_none()
@@ -624,7 +624,7 @@ impl AppWindow {
                 .border_1()
                 .border_color(if primary { c("accent") } else { c("border") })
                 .bg(if primary { c("accent") } else { c("raised") })
-                .text_color(if primary { c("accent_foreground") } else { c("foreground") })
+                .text_color(if primary { on_accent() } else { c("foreground") })
                 .text_xs()
                 .cursor_pointer()
                 .hover(|s| s.opacity(0.85))
@@ -646,12 +646,12 @@ impl AppWindow {
             .bg(c("surface"))
             .child(div().w(px(8.0)).h(px(8.0)).flex_none().rounded_full().when(e.dirty, |d| d.bg(c("accent"))))
             .child(div().flex_none().font_weight(FontWeight::SEMIBOLD).text_sm().child(name))
-            .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_xs().text_color(c("dim")).child(match &e.on {
+            .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_xs().text_color(tone("dim")).child(match &e.on {
                 Some(machine) => format!("{machine}:{folder}"),
                 None => folder,
             }));
         if e.readonly() {
-            bar = bar.child(div().flex_none().text_xs().text_color(c("muted")).child(crate::i18n::t("rs.editor.read_only")));
+            bar = bar.child(div().flex_none().text_xs().text_color(tone("muted")).child(crate::i18n::t("rs.editor.read_only")));
         }
         if md && ready {
             let (p1, label) = (pane.clone(), if e.preview { crate::i18n::t("rs.editor.edit") } else { crate::i18n::t("rs.editor.preview") });
@@ -716,8 +716,8 @@ impl AppWindow {
                     .child(Editor::new(state))
                     .into_any_element()
             }
-            (Phase::Failed(message), _) => div().size_full().flex().items_center().justify_center().p(px(24.0)).text_sm().text_color(c("dim")).child(message.clone()).into_any_element(),
-            _ => div().size_full().flex().items_center().justify_center().text_sm().text_color(c("dim")).child(crate::i18n::t("rs.editor.loading")).into_any_element(),
+            (Phase::Failed(message), _) => div().size_full().flex().items_center().justify_center().p(px(24.0)).text_sm().text_color(tone("dim")).child(message.clone()).into_any_element(),
+            _ => div().size_full().flex().items_center().justify_center().text_sm().text_color(tone("dim")).child(crate::i18n::t("rs.editor.loading")).into_any_element(),
         };
         let click = pane.clone();
         div()
@@ -727,7 +727,7 @@ impl AppWindow {
             .flex_col()
             .min_h_0()
             .overflow_hidden()
-            .bg(c("background"))
+            .bg(c("surface"))
             .text_color(c("foreground"))
             .key_context(format!("Mod mod = {NAME}").as_str())
             .on_any_mouse_down(cx.listener(move |this, _, _, cx| {
@@ -754,7 +754,6 @@ pub(super) struct Probe {
     pub dirty: bool,
     pub text: Option<String>,
     pub note: &'static str,
-    pub preview: bool,
 }
 
 #[cfg(test)]
@@ -774,7 +773,6 @@ impl AppWindow {
                 Some(Note::Conflict(_)) => "conflict",
                 Some(Note::Error(_)) => "error",
             },
-            preview: e.preview,
         })
     }
 

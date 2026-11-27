@@ -22,6 +22,30 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 const OUTPUT_TIME_PER_TURN: Duration = Duration::from_millis(6);
+/// Half a blink of the cursor, and how long typing keeps it solid.
+const BLINK: Duration = Duration::from_millis(530);
+/// A bell in the first moments of a view is the replay of old output.
+const BELL_QUIET: Duration = Duration::from_millis(1500);
+
+/// Whether the cursor is drawn now: always, unless it blinks and is in its dark half.
+pub(crate) fn cursor_shown(blink: bool, dark_half: bool, typed_recently: bool) -> bool {
+    !(blink && dark_half && !typed_recently)
+}
+
+/// Whether a key press hides the pointer: the setting is on, and the key sent something (a lone modifier doesn't).
+pub(crate) fn hides_pointer(on: bool, sent: bool) -> bool {
+    on && sent
+}
+
+/// Hides the pointer until it moves (macOS; the other systems have no call in GPUI for it).
+pub(crate) fn hide_pointer() {
+    #[cfg(target_os = "macos")]
+    if let Some(class) = objc2::runtime::AnyClass::get(c"NSCursor") {
+        unsafe {
+            let _: () = objc2::msg_send![class, setHiddenUntilMouseMoves: objc2::runtime::Bool::YES];
+        }
+    }
+}
 
 fn output_turn(
     first: Stream,
@@ -42,6 +66,21 @@ fn output_turn(
         ended = !matches!(item, Stream::Data(_));
         Some(item)
     })
+}
+
+/// `text` without the indent all its non-blank lines share (what agents paint
+/// as a gutter); a single line, or lines already at the edge, stay as they are.
+pub(crate) fn trim_margin(text: &str) -> String {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let filled = || lines.iter().filter(|l| !l.trim().is_empty());
+    if filled().count() < 2 {
+        return text.to_owned();
+    }
+    let margin = filled().map(|l| l.len() - l.trim_start_matches(' ').len()).min().unwrap_or(0);
+    if margin == 0 {
+        return text.to_owned();
+    }
+    lines.iter().map(|l| if l.len() >= margin && l[..margin].bytes().all(|b| b == b' ') { &l[margin..] } else { l.trim_start_matches(' ') }).collect::<Vec<_>>().join("\n")
 }
 
 fn pad() -> (f32, f32) {
@@ -79,6 +118,8 @@ pub enum TerminalEvent {
     ContextMenu(Point<Pixels>),
     /// Something the person asked for failed: an error toast.
     Notice { title: String, body: String },
+    /// The program rang the bell (BEL).
+    Bell,
 }
 
 /// Rows of scrollback history as Ghostty's scrollbar reports them. `from_bottom`
@@ -138,6 +179,10 @@ struct Grid {
     track: Option<Bounds<Pixels>>,
     /// Each row's drawing by position, kept while the row is the same (`Rc`).
     painted: Vec<(Rc<Vec<vt::Cell>>, Vec<RowOp>, Option<usize>)>,
+    /// The blink is in its dark half (`settings.cursor_blink`).
+    blink_off: bool,
+    /// The cursor stays solid until then: the person just typed.
+    solid_until: Option<Instant>,
     /// Font size, cell size, cell font, loaded fonts and ligature setting used to draw.
     painted_with: (u32, Size<Pixels>, Font, u64, bool),
 }
@@ -183,6 +228,10 @@ pub struct TerminalView {
     /// Last observed distance; output only publishes transitions to/from the end.
     published_from_bottom: Option<u64>,
     _render_hold: Option<(Instant, Task<()>)>,
+    /// Flips `Grid::blink_off` while the cursor blinks (dropped when it stops).
+    blink_task: Option<Task<()>>,
+    /// When this view was made: a bell in the replay of old output isn't news.
+    born: Instant,
     _reader: Option<Task<()>>,
 }
 
@@ -328,6 +377,8 @@ impl TerminalView {
                 thumb: None,
                 track: None,
                 painted: Vec::new(),
+                blink_off: false,
+                solid_until: None,
                 painted_with: (0, Size::default(), font(""), 0, false),
             })),
             focus: cx.focus_handle(),
@@ -344,6 +395,8 @@ impl TerminalView {
             attach_deadline,
             published_from_bottom: None,
             _render_hold: None,
+            blink_task: None,
+            born: Instant::now(),
             _reader: None,
         };
         view.connect(core, cx);
@@ -586,8 +639,12 @@ impl TerminalView {
                     }
                 }
             }
-            g.vt.take_title()
+            (g.vt.take_title(), g.vt.take_bell())
         };
+        let (title, bell) = title;
+        if bell && self.born.elapsed() > BELL_QUIET {
+            cx.emit(TerminalEvent::Bell);
+        }
         if let Some(title) = title {
             let title = if title.is_empty() { self.address.clone() } else { title };
             self.set_title(&title, cx);
@@ -617,6 +674,27 @@ impl TerminalView {
             self.redraw_soon(cx);
         }
         open
+    }
+
+    /// Starts the blink clock while the cursor blinks in the terminal with the keyboard, and stops it otherwise.
+    fn tend_blink(&mut self, focused: bool, cx: &mut Context<Self>) {
+        let blinking = crate::settings::get().cursor_blink && focused;
+        if blinking && self.blink_task.is_none() {
+            self.blink_task = Some(cx.spawn(async move |this, cx| {
+                loop {
+                    cx.background_executor().timer(BLINK).await;
+                    let Ok(()) = this.update(cx, |this, cx| {
+                        {
+                            let mut g = this.grid.borrow_mut();
+                            g.blink_off = !g.blink_off;
+                        }
+                        cx.notify();
+                    }) else { break };
+                }
+            }));
+        } else if !blinking && self.blink_task.take().is_some() {
+            self.grid.borrow_mut().blink_off = false;
+        }
     }
 
     /// Output is drawn on a shared clock (~30 a second), so panes printing
@@ -677,6 +755,8 @@ impl TerminalView {
             if crate::settings::get().scroll_on_input {
                 g.vt.scroll_to_bottom();
             }
+            g.solid_until = Some(Instant::now() + BLINK);
+            g.blink_off = false;
             g.core.input(ch, bytes);
         }
     }
@@ -772,6 +852,15 @@ impl TerminalView {
         }
     }
 
+    /// Types `text` into the program as a paste (several lines arrive as one block), then Enter when `enter`.
+    pub fn type_command(&mut self, text: &str, enter: bool, _cx: &mut Context<Self>) {
+        let bytes = self.grid.borrow().vt.paste_bytes(text);
+        self.send(&bytes);
+        if enter {
+            self.send(b"\r");
+        }
+    }
+
     /// Ctrl+V: a remote image, clipboard text on Windows, or the key itself.
     pub fn paste_image(&mut self, cx: &mut Context<Self>) {
         if self.send_image(cx) {
@@ -803,6 +892,7 @@ impl TerminalView {
         let Some(text) = self.grid.borrow().vt.selection_text() else {
             return false;
         };
+        let text = if crate::settings::get().trim_copy_margin { trim_margin(&text) } else { text };
         cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
         #[cfg(target_os = "linux")]
         cx.write_to_primary(ClipboardItem::new_string(text));
@@ -996,6 +1086,9 @@ impl TerminalView {
         }
         let bytes = key_bytes(&mut self.grid.borrow_mut().vt, ev);
         if let Some(bytes) = bytes {
+            if hides_pointer(crate::settings::get().hide_mouse_on_type, !bytes.is_empty()) {
+                hide_pointer();
+            }
             self.send(&bytes);
             cx.stop_propagation();
         }
@@ -2251,13 +2344,26 @@ fn paint_grid(bounds: Bounds<Pixels>, grid: &Rc<RefCell<Grid>>, focused: bool, w
 
     paint_images(false, window);
 
-    if let Some(cur) = frame.cursor {
+    let prefs = crate::settings::get();
+    let (dark_half, typed_recently) = {
+        let g = grid.borrow();
+        (g.blink_off, g.solid_until.is_some_and(|t| Instant::now() < t))
+    };
+    let blink_shown = !focused || cursor_shown(prefs.cursor_blink, dark_half, typed_recently);
+    if let Some(cur) = frame.cursor.filter(|_| blink_shown) {
         let (x, y) = (cur.x as usize, cur.y as usize);
+        // The person's shape wins over the program's (the hollow one of an unfocused pane stays).
+        let shape = match prefs.cursor_shape {
+            Some(crate::settings::CursorPref::Block) => CursorShape::Block,
+            Some(crate::settings::CursorPref::Bar) => CursorShape::Bar,
+            Some(crate::settings::CursorPref::Underline) => CursorShape::Underline,
+            None => cur.shape,
+        };
         let wide = frame.rows.get(y).and_then(|r| r.get(x)).is_some_and(|c| c.wide);
         let w = cell.width * if wide { 2.0 } else { 1.0 };
-        let color = hsla(cur.color);
+        let color = hsla(cur.color).opacity(prefs.cursor_opacity);
         let p = at(x, y);
-        match (focused, cur.shape) {
+        match (focused, shape) {
             (true, CursorShape::Block) => {
                 window.paint_quad(fill(snap_box(Bounds::new(p, size(w, cell.height))), color));
                 if let Some(c) = frame.rows.get(y).and_then(|r| r.get(x)).filter(|c| !c.text.is_empty()) {
@@ -2414,6 +2520,7 @@ impl Render for TerminalView {
                 g.core.focus(ch, focused);
             }
         }
+        self.tend_blink(focused, cx);
         let cell = cell_size(window);
         let hover = self.grid.borrow().hover;
         let found = hover.filter(|_| link_mods(&window.modifiers())).and_then(|pos| self.link_at(pos));
@@ -2535,14 +2642,14 @@ impl Render for TerminalView {
                 }
             }))
             .on_mouse_down(MouseButton::Middle, cx.listener(|this, ev: &MouseDownEvent, _, _cx| {
-                if !this.mouse(GHOSTTY_MOUSE_ACTION_PRESS, Some(ev.button), ev.position, ev.modifiers) {
-                    // macOS has no PRIMARY selection, so an unclaimed middle-click does nothing.
+                if !this.mouse(GHOSTTY_MOUSE_ACTION_PRESS, Some(ev.button), ev.position, ev.modifiers) && crate::settings::get().middle_click_paste {
+                    // Linux has the PRIMARY selection; elsewhere the clipboard (macOS only when asked for).
                     #[cfg(target_os = "linux")]
                     if let Some(text) = _cx.read_from_primary().and_then(|item| item.text()).filter(|text| !text.is_empty()) {
                         let bytes = this.grid.borrow().vt.paste_bytes(&text);
                         this.send(&bytes);
                     }
-                    #[cfg(target_os = "windows")]
+                    #[cfg(not(target_os = "linux"))]
                     this.paste(_cx);
                 }
             }))
@@ -2728,6 +2835,31 @@ impl Focusable for TerminalView {
 
 #[cfg(test)]
 mod tests {
+    use super::{cursor_shown, hides_pointer, trim_margin};
+
+    #[test]
+    fn the_cursor_blinks_only_when_asked_and_stays_solid_while_typing() {
+        assert!(cursor_shown(false, true, false), "no blink: always drawn");
+        assert!(cursor_shown(true, false, false));
+        assert!(!cursor_shown(true, true, false), "the dark half hides it");
+        assert!(cursor_shown(true, true, true), "typing keeps it solid");
+    }
+
+    #[test]
+    fn the_pointer_hides_only_for_a_key_that_sent_something() {
+        assert!(hides_pointer(true, true));
+        assert!(!hides_pointer(true, false), "a lone modifier");
+        assert!(!hides_pointer(false, true), "off by default");
+    }
+
+    #[test]
+    fn copying_can_drop_the_margin_every_line_shares() {
+        assert_eq!(trim_margin("  one\n  two\n    three"), "one\ntwo\n  three");
+        assert_eq!(trim_margin("  one\n\n  two"), "one\n\ntwo", "a blank line stays blank");
+        assert_eq!(trim_margin("  alone"), "  alone", "one line is left as it is");
+        assert_eq!(trim_margin("one\n  two"), "one\n  two", "no shared margin");
+        assert_eq!(trim_margin("  a\n \n  b"), "a\n\nb");
+    }
     use super::{ScrollTarget, pages_to_lines, scroll_target};
     use serde_json::{Value, json};
 

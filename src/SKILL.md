@@ -130,6 +130,21 @@ terminal was created, not that its program started correctly. If it exits
 with a nonzero code within two seconds, the window shows an error toast with
 the exit code and last output lines.
 
+Quick commands and the floating terminal: `sunna do terminal.quick '{"name":"test"}'` types the saved
+command `test` (`shared("quick_commands")`, edited in Settings > Terminal) into the focused terminal;
+`quick.set {name, command, enter?}` and `quick.delete {name, confirmed: true}` manage them.
+`sunna do terminal.float` shows or hides one floating shell that keeps its session
+(`shared("float.terminal")`); it is not a tab. `sunna do app.notify '{"title":"x"}'` posts a toast.
+
+`tab.close` on a space's last tab: from a key or click (Cmd+W) it closes only the tab and leaves
+the space with a new terminal; from a script (`sunna do`) it still closes the space (asks unless
+`confirmed: true`). `space.close` always closes the space. New settings.json keys for terminals
+(`cursor_shape`, `cursor_blink`, `cursor_opacity`, `inactive_pane_opacity`, `divider_width`,
+`focus_follows_mouse`, `hide_mouse_on_type`, `confirm_close_running`, `shell`, `middle_click_paste`,
+`trim_copy_margin`), alerts (`notifications.bell`, `notifications.suppress_when_focused`) and the window
+(`reduce_effects`, `show_app_name`) are described in the guide in your config folder; `shell` only
+affects terminals the app starts on this machine.
+
 A terminal started with hc opts into the window with `herdr.space=<id>`.
 `herdr.tab=<id>` chooses its tab; without it, Herdr creates a tab in that space.
 Unlabeled workers stay hidden. Do not add labels just to run a background
@@ -143,6 +158,23 @@ First read `~/.config/sunna/AGENTS.md` (or `$SUNNA_HOME/AGENTS.md` if
 set). It is the installed guide to settings, layouts, commands and mods.
 Read the generated `.d.ts` files beside it for full API details; do not edit
 those files or the generated guide. The app rewrites them on start.
+
+Every dialog (confirmations, Edit details, Go to file, the text prompt, Add project, Add a machine, the worktree dialog) is native with one shared look; `openOverlay({mod: "confirm" | "prompt" | "add-project" | "machine-add" | "worktree" | "goto-file"})` still opens them.
+
+The status bar, the top bar's brand and tabs, the sidebar's spaces list and
+footer, and the empty-state welcome are native blocks of the layout
+(`{"native": "status"}`, `"brand"`, `"tabs"`, `"spaces"`, `"files"`, `"changes"`, `"sidebar-footer"`,
+`"welcome"`), not mods; `{"mod": "workspace-status"}`, `{"mod": "tabs"}`,
+`{"mod": "spaces"}`, `{"mod": "files"}`, `{"mod": "changes"}` and the other old names still show them. The sidebar is
+shown or hidden whole (`layout.toggle` on `sidebar`, ctrl-shift-b / cmd-b). Settings > Look and the shared keys
+`status.items` / `status.format` configure the status bar as before.
+The sidebar list has a view menu (Group by, Sort by, Project order, Filters, Go to current space); `sidebar.view`,
+`sidebar.filter`, `sidebar.collapse_all`, `sidebar.reveal_current`, `sidebar.focus` (the keyboard to the list: arrows move a ringed cursor, Enter shows the space, the menu key or Shift+F10 opens its menu; ctrl-shift-e, cmd-shift-e on Mac), `space.status {id, status}` and `space.pin {id, pinned}`
+do the same from `sunna do` (they write the `sidebar.*`, `space.status` and `space.pinned` shared keys).
+Bots are native (panel `{"native": "bots"}`): `bot.new {name, template?, agent?, folder?, yolo?}`, `bot.run {name}`, `bot.enable {name, on?}`, `bot.delete {name, confirmed?}`. `cleanup.run {confirmed?}` cleans up spaces by the rules of Settings > Git and spaces (shared `cleanup.*`); `worktree.new|open|cleanup {space?}` open the worktree dialog. The tab, pane, + (new tab), awake and help (`app.help`) menus are native; a mod's `{"mod":"menu"}` overlay of those names gets the native one.
+
+The sidebar's context menus are native; each item is a command you can `sunna do`: `space.read`, `space.open_in`, `space.copy`, `space.details`, `space.remove {id, confirmed}`, `project.add {step?, folders?}` (a person's Add project menu; `folders: [paths]` opens a space per folder), `project.icon`, `project.hide`, `project.open_in`, `project.copy`, `project.remove`, `project.worktree`, `project.move {key, index, group?}`, `machine.rename`, `machine.check`, `machine.remove` and `sidebar.menu {kind: space|project|machine|group, id|key|machine}`.
+Project groups and lineage: `group.new {key, name?, color?}`, `group.rename {id, name}`, `group.color {id, color}`, `group.delete {id, confirmed}`, `group.move {key, group?}` (`group: ""` takes it out), `group.reorder {id, index}`, `group.refresh {id}`, `space.parent {id, parent?}` and `space.worktree {id}` (the dialog's «Create from this space» nests the new worktree under the space). Their shared keys are `sidebar.groups`, `sidebar.project_keys` and `space.parents`. A person drags a space, a project or a group header to reorder (a space onto a state heading changes its state; a project onto a group heading puts it in) or moves the row under the keyboard cursor with Alt+Up and Alt+Down; each is one of the commands above.
 
 - `terminal_line_height` (default 1, 0.8..2) adjusts terminal rows;
   `terminal_cell_width` (default 1, 0.8..2) adjusts terminal columns;
@@ -212,3 +244,5 @@ Never experiment with pointer/key automation on the person's real display.
 When developing the app on Linux, its `scripts/sandbox` provides an isolated
 home, core and display: `up`, `do`, `status`, `shot`, then `down` when done.
 Never stop a server or session you didn't start.
+
+The palette, Go to..., What's new, the welcome and Send feedback are native dialogs (no `frame/` mods). `mod.open {name}` with `picker`, `frame-palette`, `frame-whatsnew`, `frame-welcome` or `frame-feedback` opens them. Esc or the ✕ closes; the welcome records shared `frame.welcomed` (`finished` or `skipped`).

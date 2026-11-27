@@ -179,7 +179,7 @@ impl SettingsView {
             let mid = m.clone();
             out = out.child(
                 line(format!("st-sb-c-{m}"))
-                    .child(div().flex_1().min_w_0().truncate().text_size(z(14.0)).text_color(c("muted")).child(text(t)))
+                    .child(div().flex_1().min_w_0().truncate().text_size(z(14.0)).text_color(tone("muted")).child(text(t)))
                     .child(button(format!("st-sb-add-{m}"), i18n::t("settings.sidebar_add"), Self::act_on(&me, move |this, w, cx| this.edit_sidebar(Op::Add(mid.clone()), w, cx)))),
             );
         }

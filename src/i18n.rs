@@ -83,6 +83,16 @@ pub fn tf(key: &str, vars: &[(&str, &str)]) -> String {
     text
 }
 
+/// The key of a count's phrase: `<key>.one` for exactly 1, `<key>.other` for anything else (0 included).
+pub fn plural_key(key: &str, n: usize) -> String {
+    format!("{key}.{}", if n == 1 { "one" } else { "other" })
+}
+
+/// A phrase that counts something, in its singular or plural form: «1 evento», «2 eventos».
+pub fn tn(key: &str, n: usize, vars: &[(&str, &str)]) -> String {
+    tf(&plural_key(key, n), vars)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -99,6 +109,31 @@ mod tests {
         for text in [include_str!("../defaults/locales/en.json"), include_str!("../defaults/locales/es.json")] {
             let table: Table = serde_json::from_str(text).expect("locale file is valid JSON");
             assert!(!table.is_empty());
+        }
+    }
+
+    #[test]
+    fn a_count_is_singular_only_at_exactly_one() {
+        assert_eq!(plural_key("activity.feed_count", 1), "activity.feed_count.one");
+        assert_eq!(plural_key("activity.feed_count", 0), "activity.feed_count.other");
+        assert_eq!(plural_key("activity.feed_count", 2), "activity.feed_count.other");
+        for (table, one, other) in [(es(), "1 evento", "2 eventos"), (en(), "1 event", "2 events")] {
+            let say = |n: usize| table[&plural_key("activity.feed_count", n)].replace("{count}", &n.to_string());
+            assert_eq!((say(1).as_str(), say(2).as_str()), (one, other));
+        }
+    }
+
+    #[test]
+    fn every_singular_phrase_has_its_plural_and_back() {
+        for table in [en(), es()] {
+            for key in table.keys() {
+                if let Some(base) = key.strip_suffix(".one") {
+                    assert!(table.contains_key(&format!("{base}.other")), "{key} has no .other");
+                }
+                if let Some(base) = key.strip_suffix(".other") {
+                    assert!(table.contains_key(&format!("{base}.one")), "{key} has no .one");
+                }
+            }
         }
     }
 
