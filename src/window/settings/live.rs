@@ -19,8 +19,8 @@ impl SettingsView {
                 if this
                     .update_in(cx, |this, _, cx| {
                         match this.section.as_str() {
-                            "machines" if n % MACHINES_EVERY == 0 => this.load_machines(cx),
-                            "updates" | "privacy" => cx.notify(),
+                            "machines" if n.is_multiple_of(MACHINES_EVERY) => this.load_machines(cx),
+                            "updates" | "privacy" | "terminal" => cx.notify(),
                             _ => {}
                         }
                     })

@@ -18,9 +18,12 @@ use super::timefmt;
 
 /// The mods that ship in defaults/mods (a test keeps this list equal to the folder).
 pub const SHIPPED_MODS: &[&str] = &[
-    "activity", "add-project", "agents", "awake-menu", "bots", "changes", "files", "folders", "help", "machine-add", "menu", "new-menu", "pane", "peek",
-    "picker", "prompt", "search", "spaces", "tabs", "terminals-bar", "terminals-pane", "toast", "welcome", "win98", "workspace-chrome", "workspace-status", "worktree",
+    "terminals-bar", "win98",
 ];
+
+/// `defaults/mods/workspace-chrome` keeps only the icons (`mods/workspace-chrome/x.svg`) that
+/// other mods and the app draw: no code, so it is not a mod and the list leaves it out.
+pub const ICON_PACK: &str = "workspace-chrome";
 
 /// Why something failed: a locale key, and what the program said.
 #[derive(Debug, Clone, PartialEq)]
@@ -402,6 +405,9 @@ pub fn list_installed(home: &Path) -> Vec<Installed> {
     for (root, disabled, rel_root) in [(home.join("mods"), false, "mods"), (home.join("mod-store").join("disabled"), true, "mod-store/disabled")] {
         for name in list_dirs(&root) {
             let dir = root.join(&name);
+            if !disabled && name == ICON_PACK && !dir.join("main.js").is_file() {
+                continue;
+            }
             list.push(Installed {
                 disabled,
                 rel: format!("{rel_root}/{name}"),
@@ -530,7 +536,7 @@ pub fn download(path: &Path, urls: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        Caps, Entry, ItemKind, Origin, SHIPPED_MODS, SourceKind, age_days, copy_dir, fetch_source, install_items, installable_path, list_dirs, list_installed, move_dir, parse_source, read_json, scan_capabilities, scan_source, slug,
+        Caps, Entry, ICON_PACK, ItemKind, Origin, SHIPPED_MODS, SourceKind, age_days, copy_dir, fetch_source, install_items, installable_path, list_dirs, list_installed, move_dir, parse_source, read_json, scan_capabilities, scan_source, slug,
         with_existing,
     };
     use serde_json::json;
@@ -667,8 +673,11 @@ mod tests {
 
     #[test]
     fn shipped_mods_equal_the_folders_of_defaults_mods() {
-        let mut real = list_dirs(&Path::new(env!("CARGO_MANIFEST_DIR")).join("defaults/mods"));
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("defaults/mods");
+        // A folder with no main.js is not a mod (the icon pack).
+        let mut real: Vec<String> = list_dirs(&root).into_iter().filter(|n| root.join(n).join("main.js").is_file()).collect();
         real.sort();
+        assert!(!root.join(ICON_PACK).join("main.js").exists() && root.join(ICON_PACK).join("search.svg").exists());
         let mut listed: Vec<String> = SHIPPED_MODS.iter().map(|s| (*s).to_owned()).collect();
         listed.sort();
         assert_eq!(listed, real);

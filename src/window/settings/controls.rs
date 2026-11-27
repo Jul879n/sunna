@@ -22,18 +22,18 @@ fn z(v: f32) -> Pixels {
 /// What every focusable control shows while the keyboard (not the mouse) has
 /// it: a 2 px ring in the accent. Controls are tab stops; Enter and Space press them.
 pub fn ring(s: StyleRefinement) -> StyleRefinement {
-    s.border_2().border_color(c("accent"))
+    s.border_2().border_color(graphic("accent"))
 }
 
 /// A group's small caps title.
 pub fn heading(text: impl Into<SharedString>) -> Div {
     let text: SharedString = text.into();
-    div().pt(z(6.0)).pb(z(8.0)).text_size(z(12.0)).font_weight(FontWeight::SEMIBOLD).text_color(c("muted")).child(text.to_uppercase())
+    div().pt(z(6.0)).pb(z(8.0)).text_size(z(12.0)).font_weight(FontWeight::SEMIBOLD).text_color(tone("muted")).child(text.to_uppercase())
 }
 
 /// A paragraph under a heading.
 pub fn note(text: impl Into<SharedString>) -> Div {
-    div().pb(z(12.0)).text_size(z(13.0)).text_color(c("muted")).child(text.into())
+    div().pb(z(12.0)).text_size(z(13.0)).text_color(tone("muted")).child(text.into())
 }
 
 pub fn gap() -> Div {
@@ -63,7 +63,7 @@ pub fn row(title: impl Into<SharedString>, about: Option<String>, control: impl 
                 .flex_col()
                 .gap(z(3.0))
                 .child(div().text_size(z(14.0)).text_color(c("foreground")).child(title.into()))
-                .when_some(about.filter(|a| !a.is_empty()), |d, a| d.child(div().text_size(z(12.5)).line_height(z(18.0)).text_color(c("muted")).child(a))),
+                .when_some(about.filter(|a| !a.is_empty()), |d, a| d.child(div().text_size(z(12.5)).line_height(z(18.0)).text_color(tone("muted")).child(a))),
         )
         .child(div().flex_none().child(control))
 }
@@ -101,7 +101,7 @@ pub fn primary(id: impl Into<ElementId>, label: impl Into<SharedString>, on: Act
         .rounded(z(7.0))
         .cursor_pointer()
         .bg(c("accent"))
-        .text_color(c("accent_foreground"))
+        .text_color(on_accent())
         .text_size(z(13.0))
         .font_weight(FontWeight::SEMIBOLD)
         .border_1()
@@ -138,7 +138,7 @@ pub fn switch(id: impl Into<ElementId>, on: bool, toggle: Act) -> Stateful<Div> 
                 .bg(if on { c("accent") } else { c("hover") })
                 .flex()
                 .when(on, |d| d.justify_end())
-                .child(div().w(z(16.0)).h(z(16.0)).rounded(z(8.0)).bg(if on { c("accent_foreground") } else { c("muted") })),
+                .child(div().w(z(16.0)).h(z(16.0)).rounded(z(8.0)).bg(if on { on_accent() } else { c("muted") })),
         )
 }
 
@@ -153,7 +153,7 @@ pub fn segmented<V: PartialEq + Clone + 'static>(id: &str, choices: Vec<(V, Stri
         .rounded(z(8.0))
         .border_1()
         .border_color(c("border"))
-        .bg(c("background"))
+        .bg(super::super::dialog::field_bg())
         .children(choices.into_iter().enumerate().map(|(i, (value, label))| {
             let on = &value == now;
             let pick = pick.clone();
@@ -169,7 +169,7 @@ pub fn segmented<V: PartialEq + Clone + 'static>(id: &str, choices: Vec<(V, Stri
                 .border_1()
                 .border_color(if on { c("border") } else { gpui::transparent_black() })
                 .when(on, |d| d.bg(c("raised")).text_color(c("foreground")))
-                .when(!on, |d| d.text_color(c("muted")).hover(|s| s.text_color(c("foreground")).bg(c("hover"))))
+                .when(!on, |d| d.text_color(tone("muted")).hover(|s| s.text_color(c("foreground")).bg(c("hover"))))
                 .tab_index(0)
                 .focus_visible(ring)
                 .on_click(move |_, w, cx| pick(value.clone(), w, cx))
@@ -189,7 +189,7 @@ pub fn stepper(id: &str, value: impl Into<SharedString>, minus: Act, plus: Act) 
             .justify_center()
             .cursor_pointer()
             .text_size(z(15.0))
-            .text_color(c("muted"))
+            .text_color(tone("muted"))
             .hover(|s| s.bg(c("hover")).text_color(c("foreground")))
             .active(|s| s.bg(c("selected")))
             .tab_index(0)
@@ -221,7 +221,7 @@ fn field_base(input: &Entity<InputState>, focused: bool) -> Div {
         .border_1()
         .border_color(c("border"))
         .when(focused, |d| d.border_2().border_color(c("accent")))
-        .bg(c("background"))
+        .bg(super::super::dialog::field_bg())
         .text_size(z(12.5))
         .text_color(c("foreground"))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -274,7 +274,7 @@ pub fn icon_button(id: impl Into<ElementId>, icon: &'static [u8], on: Act) -> St
         .tab_index(0)
         .focus_visible(ring)
         .on_click(move |_, w, cx| on(w, cx))
-        .child(svg().data(icon).size(z(14.0)).text_color(c("muted")))
+        .child(svg().data(icon).size(z(14.0)).text_color(tone("muted")))
 }
 
 /// One choice of a list of exclusive options: a radio mark and its text, 44 px tall.

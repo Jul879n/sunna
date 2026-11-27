@@ -41,7 +41,6 @@ pub const SETTINGS: &[(&str, &str, &str, &str)] = &[
     ("look", "settings.interface_font", "", "font tipografía"),
     ("general", "settings.language", "settings.language_about", "idioma español english"),
     ("general", "settings.resume_agents", "", "restaurar sesión"),
-    ("general", "settings.folder_roots", "", "carpetas buscador"),
     ("agents", "settings.full_access", "settings.full_access_about", "yolo permisos"),
     ("alerts", "settings.play_sounds", "settings.when_an_agent_needs_you", "sonido audio"),
     ("alerts", "settings.an_agent_needs_you", "", "sonido bloqueado"),
@@ -56,6 +55,21 @@ pub const SETTINGS: &[(&str, &str, &str, &str)] = &[
     ("terminal", "settings.term_copy_on_select", "settings.term_copy_on_select_about", "copiar seleccionar portapapeles copy"),
     ("terminal", "settings.term_osc52", "settings.term_osc52_about", "osc 52 portapapeles clipboard remoto"),
     ("terminal", "settings.term_scroll_on_input", "settings.term_scroll_on_input_about", "bajar final escribir scroll teclear"),
+    ("terminal", "settings.cursor_shape", "settings.cursor_shape_about", "cursor forma bloque barra subrayado"),
+    ("terminal", "settings.cursor_blink", "settings.cursor_blink_about", "cursor parpadeo blink"),
+    ("terminal", "settings.cursor_opacity", "settings.cursor_opacity_about", "cursor opacidad transparencia"),
+    ("terminal", "settings.inactive_opacity", "settings.inactive_opacity_about", "panel inactivo opacidad atenuar dim"),
+    ("terminal", "settings.divider_width", "settings.divider_width_about", "divisor grosor separador paneles gap"),
+    ("terminal", "settings.focus_follows_mouse", "settings.focus_follows_mouse_about", "foco ratón puntero seguir hover"),
+    ("terminal", "settings.hide_mouse", "settings.hide_mouse_about", "ocultar ratón puntero escribir"),
+    ("terminal", "settings.confirm_close_running", "settings.confirm_close_running_about", "confirmar cerrar terminal activo proceso"),
+    ("terminal", "settings.shell", "settings.shell_about", "shell zsh bash fish predeterminado"),
+    ("terminal", "settings.middle_paste", "settings.middle_paste_about", "pegar clic central middle click"),
+    ("terminal", "settings.trim_margin", "settings.trim_margin_about", "recortar margen sangría copiar gutter"),
+    ("alerts", "settings.notif_bell", "settings.notif_bell_about", "campana bell bel pitido terminal"),
+    ("alerts", "settings.notif_suppress", "settings.notif_suppress_about", "silenciar suprimir foco ventana mirando"),
+    ("look", "settings.reduce_effects", "settings.reduce_effects_about", "efectos visuales sombras blur reducir"),
+    ("look", "settings.app_name", "settings.app_name_about", "nombre app barra de título"),
     ("terminal", "settings.term_option", "settings.term_option_about", "option alt mac teclado"),
     ("alerts", "settings.notif_enabled", "settings.notif_enabled_about", "notificaciones avisos toast"),
     ("alerts", "settings.notif_done", "settings.notif_done_about", "notificaciones agente terminó listo"),
@@ -89,6 +103,9 @@ pub const SETTINGS: &[(&str, &str, &str, &str)] = &[
     ("git", "settings.orca_fresh", "settings.orca_fresh_about", "main actualizado fetch origin rama base"),
     ("git", "settings.orca_branch_names", "settings.orca_branch_names_about", "renombrar espacio rama nombre automático"),
     ("git", "settings.orca_base", "settings.orca_base_about", "comparar base cambios upstream diff"),
+    ("git", "settings.cleanup_heading", "settings.cleanup_about", "limpiar limpieza worktree espacios borrar fusionados merged cleanup"),
+    ("git", "settings.cleanup_auto", "settings.cleanup_auto_about", "limpieza automática programada cada horas"),
+    ("git", "settings.cleanup_now", "", "limpiar ahora clean up now"),
     ("git", "settings.orca_groups", "settings.orca_groups_about", "cambios grupos orden control de código source control"),
 ];
 
@@ -165,7 +182,7 @@ pub fn rank(query: &str, limit: usize) -> Vec<Hit> {
         }
     }
     // Stable, like Array.sort: equal scores keep their order.
-    scored.sort_by(|a, b| b.score.cmp(&a.score));
+    scored.sort_by_key(|s| std::cmp::Reverse(s.score));
     scored.truncate(limit);
     scored
 }
@@ -225,11 +242,10 @@ mod tests {
         for file in std::fs::read_dir(dir).unwrap().flatten() {
             let text = std::fs::read_to_string(file.path()).unwrap();
             for part in text.split("\"settings.orca_").skip(1) {
-                if let Some(end) = part.find('"') {
-                    if end > 0 && part[..end].chars().all(|c| c.is_ascii_lowercase() || c == '_' || c.is_ascii_digit()) {
+                if let Some(end) = part.find('"')
+                    && end > 0 && part[..end].chars().all(|c| c.is_ascii_lowercase() || c == '_' || c.is_ascii_digit()) {
                         used.insert(format!("settings.orca_{}", &part[..end]));
                     }
-                }
             }
         }
         assert!(used.len() > 40, "{}", used.len());

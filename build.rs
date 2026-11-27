@@ -10,7 +10,9 @@
 use std::path::Path;
 
 fn walk(dir: &Path, base: &Path, root: &Path, out: &mut Vec<String>) {
-    let mut entries: Vec<_> = std::fs::read_dir(dir).unwrap().flatten().map(|e| e.path()).collect();
+    // defaults/frame has no mods now (the app's own screens are native): a missing folder embeds nothing.
+    let Ok(read) = std::fs::read_dir(dir) else { return };
+    let mut entries: Vec<_> = read.flatten().map(|e| e.path()).collect();
     entries.sort();
     for p in entries {
         if p.is_dir() {

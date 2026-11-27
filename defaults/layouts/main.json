@@ -29,7 +29,7 @@
           },
           "window_drag": true,
           "content": {
-            "mod": "workspace-chrome"
+            "native": "brand"
           }
         },
         {
@@ -37,7 +37,7 @@
           "type": "block",
           "window_drag": true,
           "content": {
-            "mod": "tabs"
+            "native": "tabs"
           }
         }
       ]
@@ -52,7 +52,7 @@
           "size": {
             "px": 268
           },
-          "min": 44,
+          "min": 160,
           "max": 480,
           "background": "chrome",
           "resizable": false,
@@ -69,7 +69,7 @@
                   },
                   "min": 90,
                   "content": {
-                    "mod": "spaces"
+                    "native": "spaces"
                   }
                 }
               ]
@@ -78,13 +78,10 @@
               "id": "sidebar-footer",
               "type": "block",
               "size": {
-                "px": 69
+                "px": 101
               },
               "content": {
-                "mod": "workspace-chrome",
-                "props": {
-                  "footer": true
-                }
+                "native": "sidebar-footer"
               }
             }
           ]
@@ -123,7 +120,7 @@
                         "content": {
                           "mod": "pane"
                         },
-                        "height": 30,
+                        "height": 32,
                         "position": "top",
                         "reveal": "always"
                       }
@@ -149,35 +146,35 @@
                           "id": "files",
                           "type": "block",
                           "content": {
-                            "mod": "files"
+                            "native": "files"
                           }
                         },
                         {
                           "id": "changes",
                           "type": "block",
                           "content": {
-                            "mod": "changes"
+                            "native": "changes"
                           }
                         },
                         {
                           "id": "search",
                           "type": "block",
                           "content": {
-                            "mod": "search"
+                            "native": "search"
                           }
                         },
                         {
                           "id": "bots",
                           "type": "block",
                           "content": {
-                            "mod": "bots"
+                            "native": "bots"
                           }
                         },
                         {
                           "id": "activity",
                           "type": "block",
                           "content": {
-                            "mod": "activity"
+                            "native": "activity"
                           }
                         }
                       ]
@@ -193,7 +190,7 @@
                 "px": 28
               },
               "content": {
-                "mod": "workspace-status"
+                "native": "status"
               }
             }
           ]

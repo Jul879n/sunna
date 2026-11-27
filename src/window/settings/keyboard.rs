@@ -165,7 +165,7 @@ impl SettingsView {
                 ))
                 .when(confirm, |d| d.child(button("st-keys-restore-cancel", i18n::t("settings.cancel"), self.act(cx, |this, _, _| this.keys.restore = false))))
         );
-        page = page.child(div().pb(settings::z(12.0)).text_size(settings::z(12.5)).line_height(settings::z(18.0)).text_color(c("muted")).child(i18n::t("rs.settings.keys_restore_about")));
+        page = page.child(div().pb(settings::z(12.0)).text_size(settings::z(12.5)).line_height(settings::z(18.0)).text_color(tone("muted")).child(i18n::t("rs.settings.keys_restore_about")));
         let file = file_bindings();
         let listing = crate::keys::listing();
         let sections = order(listing.iter().map(|(s, _, _)| s.clone()).collect());
@@ -186,7 +186,7 @@ impl SettingsView {
                     .rounded(settings::z(6.0))
                     .border_1()
                     .border_color(if asking { c("accent") } else { c("border") })
-                    .bg(if asking { c("selected") } else { c("background") })
+                    .bg(if asking { c("selected") } else { super::super::dialog::field_bg() })
                     .text_size(settings::z(12.5))
                     .text_color(if asking { c("foreground") } else { c("muted") })
                     .child(if asking { i18n::t("settings.keys_press") } else { keys.clone() });
@@ -224,7 +224,7 @@ impl SettingsView {
                 }
                 group = group.child(line);
             }
-            page = page.child(div().pt(settings::z(8.0)).pb(settings::z(6.0)).text_size(settings::z(12.0)).font_weight(FontWeight::SEMIBOLD).text_color(c("muted")).child(section.clone())).child(group);
+            page = page.child(div().pt(settings::z(8.0)).pb(settings::z(6.0)).text_size(settings::z(12.0)).font_weight(FontWeight::SEMIBOLD).text_color(tone("muted")).child(section.clone())).child(group);
         }
         page
     }

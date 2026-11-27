@@ -12,17 +12,23 @@ pub fn flipped(q: &mut Object, field: &str) {
             n[k] = v.clone();
         }
     }
-    let now = n[field].as_bool().unwrap_or(true);
+    let now = n[field].as_bool().unwrap_or(default_of(field));
     n[field] = json!(!now);
-    if ["enabled", "done", "blocked"].iter().all(|k| n[*k] == json!(true)) {
+    // Gone again once every field is what absent means.
+    if ["enabled", "done", "blocked", "bell", "suppress_when_focused"].iter().all(|k| n[*k].as_bool().unwrap_or(default_of(k)) == default_of(k)) {
         q.remove("notifications");
     } else {
         q.insert("notifications".into(), n);
     }
 }
 
+/// What a notifications field is when it isn't written: all on, except the bell.
+fn default_of(field: &str) -> bool {
+    field != "bell"
+}
+
 fn notification(p: &Object, field: &str) -> bool {
-    p.get("notifications").and_then(|n| n.get(field)).and_then(Value::as_bool).unwrap_or(true)
+    p.get("notifications").and_then(|n| n.get(field)).and_then(Value::as_bool).unwrap_or(default_of(field))
 }
 
 impl SettingsView {
@@ -47,6 +53,8 @@ impl SettingsView {
             .child(row(i18n::t("settings.notif_enabled"), Some(i18n::t("settings.notif_enabled_about")), flag(self, cx, "st-notif-enabled", "enabled")))
             .child(row(i18n::t("settings.notif_done"), Some(i18n::t("settings.notif_done_about")), flag(self, cx, "st-notif-done", "done")))
             .child(row(i18n::t("settings.notif_blocked"), Some(i18n::t("settings.notif_blocked_about")), flag(self, cx, "st-notif-blocked", "blocked")))
+            .child(row(i18n::t("settings.notif_bell"), Some(i18n::t("settings.notif_bell_about")), flag(self, cx, "st-notif-bell", "bell")))
+            .child(row(i18n::t("settings.notif_suppress"), Some(i18n::t("settings.notif_suppress_about")), flag(self, cx, "st-notif-suppress", "suppress_when_focused")))
             .child(row(i18n::t("settings.notif_test"), Some(i18n::t("settings.notif_test_about")), button("st-notif-test", i18n::t("settings.notif_test_send"), test)))
             .child(controls::gap())
             .child(controls::heading(i18n::t("settings.sounds")))
@@ -61,7 +69,7 @@ impl SettingsView {
             ))
             .child(row(i18n::t("settings.an_agent_needs_you"), Some(file("blocked")), play("st-play-blocked", "blocked")))
             .child(row(i18n::t("settings.an_agent_finished"), Some(file("done")), play("st-play-done", "done")))
-            .child(div().pt(settings::z(12.0)).text_size(settings::z(12.5)).line_height(settings::z(18.0)).text_color(c("muted")).child(i18n::t("settings.want_your_own_sounds_ask")))
+            .child(div().pt(settings::z(12.0)).text_size(settings::z(12.5)).line_height(settings::z(18.0)).text_color(tone("muted")).child(i18n::t("settings.want_your_own_sounds_ask")))
     }
 }
 
@@ -79,6 +87,19 @@ mod tests {
         let mut q = obj(r#"{"zoom": 1}"#);
         flipped(&mut q, "done");
         assert_eq!(Value::Object(q), serde_json::from_str::<Value>(r#"{"zoom":1,"notifications":{"enabled":true,"done":false,"blocked":true}}"#).unwrap());
+    }
+
+    #[test]
+    fn the_bell_is_off_and_silencing_on_until_flipped() {
+        let mut q = obj("{}");
+        flipped(&mut q, "bell");
+        assert_eq!(q["notifications"]["bell"], true);
+        flipped(&mut q, "suppress_when_focused");
+        assert_eq!(q["notifications"]["suppress_when_focused"], false);
+        flipped(&mut q, "bell");
+        flipped(&mut q, "suppress_when_focused");
+        assert!(q.is_empty(), "back to the defaults leaves nothing: {q:?}");
+        assert!(!super::notification(&q, "bell") && super::notification(&q, "suppress_when_focused"));
     }
 
     #[test]

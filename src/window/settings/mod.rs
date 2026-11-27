@@ -20,7 +20,7 @@ mod machines;
 mod modlist;
 mod modstore;
 mod privacy;
-mod timefmt;
+pub(in crate::window) mod timefmt;
 mod updates;
 mod sidebar;
 mod terminal;
@@ -31,6 +31,19 @@ mod store;
 
 use controls::{Act, act};
 use store::Object;
+
+/// What the welcome dialog takes from these pages: the theme cards and a change to settings.json.
+pub(super) use theme_ui::{card as theme_card, shown_themes};
+
+/// Changes settings.json, keeping every other key; `false` when it could not be written.
+pub(super) fn edit_settings(change: impl FnOnce(&mut Object)) -> bool {
+    store::edit(change).is_ok()
+}
+
+/// settings.json as the person wrote it (empty when there is none).
+pub(super) fn read_settings() -> Object {
+    store::read().unwrap_or_default()
+}
 
 /// The Settings sections, in menu order. An unknown one opens the first.
 pub(super) const NATIVE_SECTIONS: &[&str] = &["look", "general", "git", "editor", "alerts", "terminal", "keyboard", "agents", "machines", "updates", "privacy", "mods"];
@@ -371,13 +384,13 @@ impl SettingsView {
                     .rounded(settings::z(7.0))
                     .border_1()
                     .border_color(c("border"))
-                    .bg(c("background"))
+                    .bg(super::dialog::field_bg())
                     .text_size(settings::z(12.5))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .child(div().size_full().child(gpui_base::input::Input::new(&self.search))),
             );
         for (title, sections) in search::GROUPS {
-            nav = nav.child(div().px(settings::z(10.0)).pt(settings::z(10.0)).pb(settings::z(4.0)).text_size(settings::z(11.0)).font_weight(FontWeight::SEMIBOLD).text_color(c("muted")).child(i18n::t(title).to_uppercase()));
+            nav = nav.child(div().px(settings::z(10.0)).pt(settings::z(10.0)).pb(settings::z(4.0)).text_size(settings::z(11.0)).font_weight(FontWeight::SEMIBOLD).text_color(tone("muted")).child(i18n::t(title).to_uppercase()));
             for &id in *sections {
                 let on = id == self.section && self.query.is_empty();
                 nav = nav.child(
@@ -426,7 +439,7 @@ impl SettingsView {
         };
         let mut out = div().w_full().flex().flex_col().gap(settings::z(4.0)).child(controls::heading(i18n::t("settings.search_results")));
         if hits.is_empty() {
-            out = out.child(div().text_size(settings::z(12.5)).text_color(c("muted")).child(i18n::tf("settings.no_results", &[("query", &self.query)])));
+            out = out.child(div().text_size(settings::z(12.5)).text_color(tone("muted")).child(i18n::tf("settings.no_results", &[("query", &self.query)])));
         }
         for (i, hit) in hits.into_iter().enumerate() {
             let section = hit.section;
@@ -447,7 +460,7 @@ impl SettingsView {
                     .focus_visible(controls::ring)
                     .on_click(cx.listener(move |this, _, w, cx| this.go(section, w, cx)))
                     .child(div().text_size(settings::z(14.0)).text_color(c("foreground")).child(hit.title))
-                    .child(div().text_size(settings::z(12.0)).text_color(c("muted")).child(place(hit.section))),
+                    .child(div().text_size(settings::z(12.0)).text_color(tone("muted")).child(place(hit.section))),
             );
         }
         out
@@ -555,6 +568,7 @@ impl AppWindow {
             slot: format!("overlay:{NATIVE_ID}"),
             at: self.pointer,
             size: size(880.0, 620.0),
+            ttl: None,
             expires: None,
             focus,
             layout: None,
@@ -566,6 +580,7 @@ impl AppWindow {
             key: None,
             frame: true,
             view: Some(view.into()),
+            initial: None,
         });
         cx.notify();
     }

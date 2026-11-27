@@ -71,7 +71,7 @@ pub fn card(id: String, th: &Th, selected: bool, (w, h): (f32, f32), on_click: O
         .gap(z(5.0))
         .child(div().flex_1().min_w_0().truncate().text_size(z(12.5)).text_color(if selected { c("foreground") } else { c("muted") }).child(label));
     if personal {
-        name_row = name_row.child(div().flex_none().px(z(5.0)).py(z(1.0)).rounded(z(5.0)).bg(c("hover")).text_size(z(10.5)).text_color(c("muted")).child(i18n::t("settings.theme_personal")));
+        name_row = name_row.child(div().flex_none().px(z(5.0)).py(z(1.0)).rounded(z(5.0)).bg(c("hover")).text_size(z(10.5)).text_color(tone("muted")).child(i18n::t("settings.theme_personal")));
         if let Some((edit_id, edit)) = on_edit {
             name_row = name_row.child(icon_button(edit_id, PENCIL, act(move |w, cx| {
                 cx.stop_propagation();
@@ -434,7 +434,7 @@ impl SettingsView {
             .flex_row()
             .items_center()
             .gap(z(8.0))
-            .child(div().w(z(78.0)).flex_none().text_size(z(12.0)).text_color(c("muted")).child(label.to_owned()))
+            .child(div().w(z(78.0)).flex_none().text_size(z(12.0)).text_color(tone("muted")).child(label.to_owned()))
             .child(field_state(e.input(key), 112.0, e.focused.as_deref() == Some(key), bad))
             .child(div().size(z(20.0)).flex_none().rounded(z(4.0)).border_1().border_color(c("border")).bg(if is_hex(&value) { c(&value) } else { gpui::transparent_black() }))
     }
@@ -451,7 +451,7 @@ impl SettingsView {
         let name_bad = bad.contains("name");
         let name_input = e.input("name").clone();
         let focus_name = e.focused.as_deref() == Some("name");
-        let heading = |text: String| div().pt(z(10.0)).pb(z(4.0)).text_size(z(12.0)).font_weight(FontWeight::SEMIBOLD).text_color(c("muted")).child(text.to_uppercase());
+        let heading = |text: String| div().pt(z(10.0)).pb(z(4.0)).text_size(z(12.0)).font_weight(FontWeight::SEMIBOLD).text_color(tone("muted")).child(text.to_uppercase());
         let mut terminal = div().flex().flex_col().gap(z(6.0));
         for (k, l) in [("background", "background"), ("foreground", "foreground"), ("selection", "selection"), ("cursor", "cursor")] {
             terminal = terminal.child(self.swatch(k, l));
@@ -496,7 +496,7 @@ impl SettingsView {
                                     .flex_row()
                                     .items_center()
                                     .gap(z(8.0))
-                                    .child(div().w(z(78.0)).flex_none().text_size(z(12.0)).text_color(c("muted")).child(i18n::t("settings.theme_name")))
+                                    .child(div().w(z(78.0)).flex_none().text_size(z(12.0)).text_color(tone("muted")).child(i18n::t("settings.theme_name")))
                                     .child(field_state(&name_input, 200.0, focus_name, name_bad)),
                             )
                             .child(heading(i18n::t("settings.theme_terminal_colors")))

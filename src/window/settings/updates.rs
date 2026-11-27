@@ -57,7 +57,7 @@ impl SettingsView {
         let state = check_state(self.asked, Instant::now(), u["checking"] == json!(true), !u["checked"].is_null());
         let z = settings::z;
         match state {
-            Check::Checking => div().h(z(32.0)).px(z(12.0)).flex().items_center().text_size(z(13.0)).text_color(c("muted")).child(i18n::t("settings.checking")),
+            Check::Checking => div().h(z(32.0)).px(z(12.0)).flex().items_center().text_size(z(13.0)).text_color(tone("muted")).child(i18n::t("settings.checking")),
             Check::UpToDate => div().h(z(32.0)).px(z(12.0)).flex().items_center().text_size(z(13.0)).text_color(c("ansi2")).child(format!("\u{2713} {}", i18n::t("settings.up_to_date"))),
             Check::Button => div().child(button(id, i18n::t("settings.check_now"), self.act(cx, |this, _, _| {
                 this.asked = Some(Instant::now());
@@ -138,7 +138,7 @@ impl SettingsView {
         page.child(controls::gap())
             .child(controls::heading("herdr-core"))
             .child(row(format!("herdr-core {}", core["version"].as_str().unwrap_or_default()), Some(core_about), core_control))
-            .child(div().pt(z(12.0)).text_size(z(12.5)).line_height(z(18.0)).text_color(c("dim")).child(i18n::t("settings.herdr_looks_for_both_every")))
+            .child(div().pt(z(12.0)).text_size(z(12.5)).line_height(z(18.0)).text_color(tone("dim")).child(i18n::t("settings.herdr_looks_for_both_every")))
     }
 }
 

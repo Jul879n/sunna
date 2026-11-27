@@ -1,5 +1,5 @@
 //! Settings > General: language, keeping the computer awake, resuming agents,
-//! the folder search roots, and where worktrees go and how files open.
+//! and where worktrees go and how files open.
 
 use super::*;
 use controls::{button, row, segmented, switch};
@@ -12,21 +12,6 @@ pub fn set_directory(q: &mut Object, value: &str) {
     let mut w = q.get("worktrees").and_then(Value::as_object).cloned().unwrap_or_default();
     w.insert("directory".into(), json!(value));
     q.insert("worktrees".into(), Value::Object(w));
-}
-
-/// `folders.roots`, keeping the rest of `folders`; an empty list means home.
-pub fn set_roots(q: &mut Object, roots: Vec<String>) {
-    let mut f = q.get("folders").and_then(Value::as_object).cloned().unwrap_or_default();
-    f.insert("roots".into(), json!(if roots.is_empty() { vec!["~".to_owned()] } else { roots }));
-    q.insert("folders".into(), Value::Object(f));
-}
-
-pub fn roots(p: &Object) -> Vec<String> {
-    p.get("folders")
-        .and_then(|f| f.get("roots"))
-        .and_then(Value::as_array)
-        .map(|l| l.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
-        .unwrap_or_else(|| vec!["~".to_owned()])
 }
 
 /// `menu.open_in` with `name` added once.
@@ -54,7 +39,7 @@ fn removable(id: String, text: String, remove: Act) -> Stateful<Div> {
         .flex_row()
         .items_center()
         .gap(settings::z(8.0))
-        .child(div().text_size(settings::z(13.0)).text_color(c("muted")).child(text))
+        .child(div().text_size(settings::z(13.0)).text_color(tone("muted")).child(text))
         .child(
             div()
                 .id(SharedString::from(format!("{id}-x")))
@@ -68,7 +53,7 @@ fn removable(id: String, text: String, remove: Act) -> Stateful<Div> {
                 .tab_index(0)
                 .focus_visible(controls::ring)
                 .on_click(move |_, w, cx| remove(w, cx))
-                .child(svg().data(include_bytes!("../../../defaults/mods/workspace-chrome/x.svg").as_slice()).size(settings::z(13.0)).text_color(c("muted"))),
+                .child(svg().data(include_bytes!("../../../defaults/mods/workspace-chrome/x.svg").as_slice()).size(settings::z(13.0)).text_color(tone("muted"))),
         )
 }
 
@@ -94,29 +79,6 @@ impl SettingsView {
         let resume_switch = switch("st-resume", resume, self.act(cx, move |this, w, cx| this.change(w, cx, |q| {
             if resume { q.insert("resume_agents".into(), json!(false)); } else { q.remove("resume_agents"); }
         })));
-        let roots_now = roots(&p);
-        let mut roots_col = div().flex().flex_col().items_end().gap(settings::z(6.0));
-        for (i, r) in roots_now.iter().enumerate() {
-            let list = roots_now.clone();
-            roots_col = roots_col.child(removable(format!("st-root-{i}"), r.clone(), self.act(cx, move |this, w, cx| {
-                let next: Vec<String> = list.iter().enumerate().filter(|(j, _)| *j != i).map(|(_, v)| v.clone()).collect();
-                this.change(w, cx, |q| set_roots(q, next));
-            })));
-        }
-        let list = roots_now.clone();
-        roots_col = roots_col.child(button("st-root-add", i18n::t("settings.add_folder"), {
-            let view = cx.entity().downgrade();
-            controls::act(move |w, cx| {
-                let list = list.clone();
-                let _ = view.update(cx, |this, cx| this.pick_folder(i18n::t("settings.add_folder_prompt"), w, cx, move |this, folder, w, cx| {
-                    if !list.contains(&folder) {
-                        let mut next = list;
-                        next.push(folder);
-                        this.change(w, cx, |q| set_roots(q, next));
-                    }
-                }));
-            })
-        }));
         let dir = directory(&p);
         let dir_field = self.text_field(Field::Directory, &dir, 240.0, window, cx);
         let choose = button("st-wt-dir-pick", i18n::t("settings.orca_choose"), {
@@ -161,7 +123,6 @@ impl SettingsView {
             page = page.child(row(i18n::t("settings.keep_awake"), Some(i18n::t("settings.keep_awake_about")), awake));
         }
         page.child(row(i18n::t("settings.resume_agents"), Some(i18n::t("settings.resume_agents_about")), resume_switch))
-            .child(row(i18n::t("settings.folder_roots"), Some(i18n::t("settings.folder_roots_about")), roots_col))
             .child(row(
                 i18n::t("settings.orca_worktrees_dir"),
                 Some(i18n::t("settings.orca_worktrees_dir_about")),
@@ -180,7 +141,7 @@ impl SettingsView {
 
 #[cfg(test)]
 mod tests {
-    use super::{DIRECTORY, Object, directory, roots, set_directory, set_roots};
+    use super::{DIRECTORY, Object, directory, set_directory};
     use serde_json::Value;
 
     fn obj(text: &str) -> Object {
@@ -192,14 +153,6 @@ mod tests {
         let mut q = obj(r#"{"worktrees": {"other": 1}, "zoom": 1.1}"#);
         set_directory(&mut q, "/w");
         assert_eq!(Value::Object(q), serde_json::from_str::<Value>(r#"{"worktrees":{"other":1,"directory":"/w"},"zoom":1.1}"#).unwrap());
-    }
-
-    #[test]
-    fn roots_default_to_home_and_never_end_empty() {
-        assert_eq!(roots(&obj("{}")), vec!["~"]);
-        let mut q = obj(r#"{"folders": {"keep": true, "roots": ["/a"]}}"#);
-        set_roots(&mut q, vec![]);
-        assert_eq!(Value::Object(q), serde_json::from_str::<Value>(r#"{"folders":{"keep":true,"roots":["~"]}}"#).unwrap());
     }
 
     #[test]

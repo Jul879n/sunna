@@ -64,7 +64,8 @@ impl AppWindow {
 
     /// The root's `window_blur`: frosted glass behind the window, else opaque.
     pub(super) fn apply_blur(&mut self, window: &mut Window) {
-        let want = self.chrome.window_blur;
+        // Reduced effects: no frosted glass.
+        let want = self.chrome.window_blur && !settings::get().reduce_effects;
         if self.blur_applied == want {
             return;
         }
@@ -142,7 +143,9 @@ impl AppWindow {
         {
             let _ = window;
             if self.titlebar() == Titlebar::System {
-                let strip = self.window_drag(div().flex_none().h(px(MAC_STRIP)).w_full(), cx);
+                // The app's name, centered between the window buttons, when the person wants it.
+                let name = settings::get().show_app_name.then(|| div().size_full().flex().items_center().justify_center().text_size(settings::z(12.5)).text_color(tone("muted")).child("Sunna"));
+                let strip = self.window_drag(div().flex_none().h(px(MAC_STRIP)).w_full().children(name), cx);
                 return div().size_full().flex().flex_col().child(strip).child(div().flex_1().min_h_0().flex().child(tree)).into_any_element();
             }
             tree
@@ -271,7 +274,7 @@ mod win {
                 .items_center()
                 .justify_center()
                 .hover(move |s| s.bg(hover))
-                .child(svg().data(icon).size(settings::z(16.0)).text_color(c("dim"))
+                .child(svg().data(icon).size(settings::z(16.0)).text_color(tone("dim"))
                     .group_hover(id, move |s| s.text_color(hover_text)))
         };
         let red: Hsla = rgb(0xc42b1c).into();
@@ -281,9 +284,9 @@ mod win {
             .w_full()
             .flex()
             .child(div().flex_1().h_full().window_control_area(WindowControlArea::Drag))
-            .child(button("win-min", include_bytes!("../../defaults/mods/tabs/win-min.svg"), WindowControlArea::Min, c("raised"), c("foreground")))
-            .child(button("win-max", if maximized { include_bytes!("../../defaults/mods/tabs/win-restore.svg") } else { include_bytes!("../../defaults/mods/tabs/win-max.svg") }, WindowControlArea::Max, c("raised"), c("foreground")))
-            .child(button("win-close", include_bytes!("../../defaults/mods/tabs/win-close.svg"), WindowControlArea::Close, red, gpui::white()))
+            .child(button("win-min", include_bytes!("../../assets/icons/tabs/win-min.svg"), WindowControlArea::Min, c("raised"), c("foreground")))
+            .child(button("win-max", if maximized { include_bytes!("../../assets/icons/tabs/win-restore.svg") } else { include_bytes!("../../assets/icons/tabs/win-max.svg") }, WindowControlArea::Max, c("raised"), c("foreground")))
+            .child(button("win-close", include_bytes!("../../assets/icons/tabs/win-close.svg"), WindowControlArea::Close, red, gpui::white()))
             .into_any_element()
     }
 }

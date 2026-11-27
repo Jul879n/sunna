@@ -161,7 +161,7 @@ impl SettingsView {
                     .gap(settings::z(12.0))
                     .child(div().w(settings::z(130.0)).flex_none().text_size(settings::z(14.0)).text_color(c("foreground")).child(a.name.clone()))
                     .child(controls::field_fill(&input, focused))
-                    .child(div().w(settings::z(190.0)).flex_none().truncate().text_size(settings::z(12.0)).text_color(c("muted")).child(a.yolo.join(" ")))
+                    .child(div().w(settings::z(190.0)).flex_none().truncate().text_size(settings::z(12.0)).text_color(tone("muted")).child(a.yolo.join(" ")))
                     .child(if a.yolo.is_empty() {
                         div().w(settings::z(44.0)).flex_none()
                     } else {

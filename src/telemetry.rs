@@ -725,7 +725,7 @@ mod tests {
         let o = Observation {
             agents: vec![Some("claude-code".into()), Some("/home/me/secret-tool".into()), None],
             layout: "my-private-layout".into(),
-            mods: vec!["agents".into(), "my-secret-mod".into(), "frame-welcome".into()],
+            mods: vec!["agents".into(), "my-secret-mod".into(), "frame-other".into()],
             theme: "my-theme".into(),
             ..Observation::default()
         };

@@ -21,7 +21,26 @@ pub(super) fn header_height(header: &Header) -> f32 {
 }
 
 pub(super) fn gap(n: &Node, frame: Option<&PaneFrame>) -> f32 {
-    n.gap.or(frame.and_then(|f| f.gap)).unwrap_or(0.0)
+    gap_with(n.gap, frame.map(|f| f.gap), crate::settings::get().divider_width)
+}
+
+/// The space between panes: a node's own, else the person's `divider_width` for a framed tab, else the frame's.
+fn gap_with(own: Option<f32>, frame: Option<Option<f32>>, person: Option<f32>) -> f32 {
+    own.or(frame.map(|f| person.or(f).unwrap_or(0.0))).unwrap_or(0.0)
+}
+
+#[cfg(test)]
+mod gap_tests {
+    use super::gap_with;
+
+    #[test]
+    fn the_persons_divider_width_replaces_only_the_frames_gap() {
+        assert_eq!(gap_with(None, Some(Some(8.0)), None), 8.0);
+        assert_eq!(gap_with(None, Some(Some(8.0)), Some(2.0)), 2.0);
+        assert_eq!(gap_with(None, Some(None), Some(3.0)), 3.0);
+        assert_eq!(gap_with(Some(5.0), Some(Some(8.0)), Some(2.0)), 5.0, "a layout node's own gap stays");
+        assert_eq!(gap_with(None, None, Some(2.0)), 0.0, "outside a framed tab nothing changes");
+    }
 }
 
 pub(super) fn separator_width(n: &Node, gap: f32) -> f32 {

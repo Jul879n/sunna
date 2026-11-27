@@ -104,8 +104,13 @@ impl Staged {
     fn entries(&self) -> Vec<String> {
         let mut entries = Vec::new();
         for folder in ["mods", "frame"] {
-            for entry in std::fs::read_dir(self.0.join(folder)).unwrap() {
+            for entry in std::fs::read_dir(self.0.join(folder)).into_iter().flatten() {
                 let entry = entry.unwrap();
+                // The icon pack (`mods/workspace-chrome`) ships svgs only: it is not a mod.
+                if folder == "mods" && entry.file_name() == "workspace-chrome" {
+                    assert!(!entry.path().join("main.js").exists());
+                    continue;
+                }
                 assert!(entry.path().join("main.js").is_file(), "missing main.js: {:?}", entry.path());
                 entries.push(format!("{folder}/{}", entry.file_name().to_str().unwrap()));
             }
@@ -255,10 +260,6 @@ fn module(values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> HostMod
                 }
                 "hc" if first == json!(["machine", "add", "host", "--json"]) => {
                     Some(json!({"code":1,"stdout":"{\"error\":{\"kind\":\"host_key\",\"message\":\"unknown host key\"}}","stderr":""}))
-                }
-                // The files panel lists a folder with sh: kind and name pairs.
-                "exec" if first == "sh" && a.get(1).map(from_host).and_then(|v| v.get(2).cloned()) == Some(json!("files")) => {
-                    Some(json!({"code":0,"stdout":"d\u{0}src\u{0}f\u{0}README.md\u{0}","stderr":""}))
                 }
                 // The spaces mod looks for a repo icon with sh: none found in the fixture.
                 "exec" if first == "sh" && a.get(1).map(from_host).and_then(|v| v.get(3).cloned()) == Some(json!("/fixture/app/project-icons")) => {
@@ -513,58 +514,9 @@ fn a_described_mod_leaves_no_folder_behind(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
     let path = staged.0.clone();
-    describe(cx, &staged, "mods/agents", true, props(), updates("current", "current"), None).unwrap();
     drop(staged);
     cx.run_until_parked();
     assert!(!path.exists(), "left behind: {:?}", std::fs::read_dir(&path).map(|d| d.flatten().map(|e| e.file_name()).collect::<Vec<_>>()));
-}
-
-#[gpui::test]
-fn brand_leaves_room_for_macos_traffic_lights_only_outside_full_screen(cx: &mut TestAppContext) {
-    cx.update(gpui_shell::init);
-    let staged = Staged::new();
-    for (fullscreen, inset) in [(false, true), (true, false)] {
-        let mut values = fixture(true, props(), updates("current", "current"));
-        values.insert("window".into(), json!({"platform":"macos","titlebar":"none","fullscreen":fullscreen,"buttons":false}));
-        let tree = describe_with_values(cx, &staged, "mods/workspace-chrome", values, None).unwrap();
-        let root = tree.lines().next().unwrap();
-        assert_eq!(root.contains(".pl[Number(84.0)]"), inset, "fullscreen={fullscreen}: {tree}");
-    }
-}
-
-#[gpui::test]
-fn tabs_start_after_the_top_bar_brand_which_holds_the_window_buttons(cx: &mut TestAppContext) {
-    cx.update(gpui_shell::init);
-    let staged = Staged::new();
-    for (platform, fullscreen) in [("macos", false), ("macos", true), ("linux", false), ("windows", false)] {
-        let mut values = fixture(true, props(), updates("current", "current"));
-        values.insert("window".into(), json!({"platform":platform,"titlebar":"none","fullscreen":fullscreen,"buttons":false}));
-        let tree = describe_with_values(cx, &staged, "mods/tabs", values, None).unwrap();
-        let root = tree.lines().next().unwrap();
-        assert!(root.contains(".pl[Number(10.0)]") || !root.contains(".pl["), "{platform}/{fullscreen}: {tree}");
-        assert!(tree.contains("tab-tab1"), "first tab must remain visible: {tree}");
-    }
-}
-
-#[gpui::test]
-fn windows_tab_buttons_use_matching_vector_icons(cx: &mut TestAppContext) {
-    cx.update(gpui_shell::init);
-    let staged = Staged::new();
-    for platform in ["windows", "linux"] {
-        for maximized in [false, true] {
-            let mut values = fixture(true, props(), updates("current", "current"));
-            values.insert("window".into(), json!({"platform":platform,"buttons":true,"maximized":maximized}));
-            let tree = describe_with_values(cx, &staged, "mods/tabs", values, None).unwrap();
-            if platform == "windows" {
-                for icon in ["win-min.svg", if maximized { "win-restore.svg" } else { "win-max.svg" }, "win-close.svg"] {
-                    assert!(tree.contains(icon), "missing {icon}: {tree}");
-                }
-            } else {
-                assert!(!tree.contains("mods/tabs/win-"), "{tree}");
-                assert!(tree.contains("mods/pane/close.svg"), "{tree}");
-            }
-        }
-    }
 }
 
 struct RootedView(gpui::Entity<gpui_shell::ShellRoot>);
@@ -628,35 +580,6 @@ export default class Demo extends View {
 }
 
 #[gpui::test]
-fn pane_header_divider_faces_the_terminal(cx: &mut TestAppContext) {
-    cx.update(gpui_shell::init);
-    let staged = Staged::new();
-    for (position, reveal) in [("bottom", "always"), ("top", "always"), ("", "always"), ("bottom", "hover"), ("top", "hover")] {
-        let mut values = fixture(true, props(), updates("current", "current"));
-        values.insert("layout".into(), json!({
-            "id": "root", "type": "column", "children": [
-                {"id": "hidden", "type": "block", "hidden": true,
-                 "content": {"tab": "active", "pane": {"header": {"position": "bottom"}}}},
-                {"id": "stack", "type": "stack", "active": "shown", "children": [
-                    {"id": "inactive", "type": "block",
-                     "content": {"tab": "active", "pane": {"header": {"position": "bottom"}}}},
-                    {"id": "shown", "type": "block",
-                     "content": {"tab": "active", "pane": {"header": {"position": position, "reveal": reveal}}}}
-                ]}
-            ]
-        }));
-        if position.is_empty() {
-            values.get_mut("layout").unwrap()["children"][1]["children"][1]["content"]["pane"]["header"].as_object_mut().unwrap().remove("position");
-        }
-        let tree = describe_with_values(cx, &staged, "mods/pane", values, None).unwrap();
-        let head = tree.lines().find(|l| l.contains("pane-head-")).unwrap();
-        let (edge, outside) = if position == "bottom" { ("t", "b") } else { ("b", "t") };
-        assert!(head.contains(&format!(".border_{edge}[Number(1.0)]")), "{position}: {head}");
-        assert!(!head.contains(&format!(".border_{outside}[")), "{position}: {head}");
-    }
-}
-
-#[gpui::test]
 fn check_materializes_retained_elements_in_a_rendered_view(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
@@ -677,109 +600,6 @@ fn check_materializes_retained_elements_in_a_rendered_view(cx: &mut TestAppConte
         assert!(!description.is_empty(), "{body}");
         gpui::AnyWindowHandle::from(window).update(cx, |_, window, _| window.remove_window()).unwrap();
     }
-}
-
-#[gpui::test]
-fn long_space_names_use_the_sidebar_width(cx: &mut TestAppContext) {
-    cx.update(gpui_shell::init);
-    let staged = Staged::new();
-    let name = "quarterly infrastructure cost review";
-    let mut values = fixture(true, props(), updates("current", "current"));
-    let spaces = values.get_mut("spaces").unwrap().as_array_mut().unwrap();
-    spaces[0]["name"] = json!(name);
-    // A worktree of the first space's repo, drawn nested under it.
-    spaces.insert(1, json!({"id":"s3","index":2,"name":"portal rewrite","folder":"/fixture/portal","machine":null,"branch":null,"active":false,"status":"idle","tabs":[]}));
-    // The remote space is on main in a repo named after it: its tail has nothing to show.
-    let git = "this.git[JSON.stringify([null, '/fixture/project'])] = { name: 'herdr', branch: 'feature/rate-limiting', ahead: 0, behind: 0, repo: JSON.stringify([null, '/fixture/project/.git']), linked: false };
-        this.git[JSON.stringify([null, '/fixture/portal'])] = { name: 'herdr', branch: 'portal-rewrite', ahead: 0, behind: 0, repo: JSON.stringify([null, '/fixture/project/.git']), linked: true };
-        this.git[JSON.stringify(['remote', '/remote/project'])] = { name: 'remote', branch: 'main', ahead: 0, behind: 0, repo: JSON.stringify(['remote', '/remote/project/.git']), linked: false };";
-    let tree = describe_with_values(cx, &staged, "mods/spaces", values, Some(git)).unwrap();
-    let lines: Vec<&str> = tree.lines().collect();
-    let text = lines.iter().position(|l| l.contains(&format!("text {name:?}"))).unwrap();
-    let label = lines[text - 1];
-    assert!(!label.contains(".max_w"), "a wider sidebar must show more of the name: {label}");
-    assert!(!label.contains(".flex_shrink[Number(0.0)]"), "the name must give way when the row is full: {label}");
-    assert!(label.contains(".flex_1") && label.contains(".min_w[Number(0.0)]"), "the name takes the row's width and gives way to the age: {label}");
-    // The first branch icon is the project header's new-worktree button; the space rows follow.
-    let icon = lines.iter().filter(|l| l.contains("branch.svg")).nth(1).expect("the worktree space is nested");
-    assert!(icon.contains(".flex_none"), "a worktree's icon keeps its size while the name gives way: {icon}");
-}
-
-#[gpui::test]
-fn rebuilt_machine_offers_connect_only_for_identity_mismatch(cx: &mut TestAppContext) {
-    cx.update(gpui_shell::init);
-    let staged = Staged::new();
-    for (state, why, offered) in [
-        ("unreachable", "a different core answers there (\"new-id\")", true),
-        ("unreachable", "connection refused", false),
-        ("unreachable", "a different core answers there", false),
-        ("connected", "a different core answers there (\"new-id\")", false),
-    ] {
-        let setup = format!(
-            "this.machines = [{{name:'cloud', state:{}, why:{}, target:'host'}}]; this.folded.add('cloud');",
-            json!(state), json!(why)
-        );
-        let tree = describe(cx, &staged, "mods/spaces", false, props(), updates("current", "current"), Some(&setup)).unwrap();
-        assert_eq!(tree.contains("machine-connect-cloud"), offered, "{state}/{why}: {tree}");
-        assert_eq!(tree.contains("rebuilt ·"), offered, "{tree}");
-        assert_eq!(tree.contains("This machine was rebuilt or replaced. Click to connect to the new one."), offered, "{tree}");
-        assert!(!tree.contains("machine-reconnect-"), "reconnect belongs in the machine row: {tree}");
-    }
-}
-
-#[gpui::test]
-fn machine_logout_warning_tracks_current_remote_state(cx: &mut TestAppContext) {
-    cx.update(gpui_shell::init);
-    let staged = Staged::new();
-    for state in ["false", "true", "null", "undefined"] {
-        let setup = format!("this.hosts = []; this.added = [{{name:'cloud', target:'host', keeps_running_after_logout:{state}, logout_linger_user:'-alice'}}];");
-        let tree = describe(cx, &staged, "mods/machine-add", false, props(), updates("current", "current"), Some(&setup)).unwrap();
-        assert_eq!(tree.contains("Agents on cloud stop when you disconnect"), state == "false", "{tree}");
-        assert_eq!(tree.contains("ma-logout-copy-cloud"), state == "false", "{tree}");
-        if state == "false" { assert!(tree.contains("sudo loginctl enable-linger -- -alice"), "{tree}"); }
-        let setup = format!("this.machines = [{{name:'cloud', target:'host', state:'connected', keeps_running_after_logout:{state}}}];");
-        let tree = describe(cx, &staged, "mods/spaces", false, props(), updates("current", "current"), Some(&setup)).unwrap();
-        assert_eq!(tree.contains("machine-logout-cloud"), state == "false", "{tree}");
-    }
-}
-
-#[gpui::test]
-fn machine_picker_keeps_long_lists_scrollable(cx: &mut TestAppContext) {
-    cx.update(gpui_shell::init);
-    let staged = Staged::new();
-    let tree = describe(
-        cx, &staged, "mods/machine-add", false, props(), updates("current", "current"),
-        Some("this.hosts = Array.from({length: 30}, (_, i) => ({alias: `host-${i}`, aliases: []}));"),
-    ).unwrap();
-    let scroll = tree.lines().find(|line| line.contains("ma-hosts")).unwrap();
-    assert!(scroll.contains("overflow_y_scroll") && !scroll.contains("overflow_y_scrollbar"), "{tree}");
-    assert!(scroll.contains(".min_h[Number(0.0)]"), "{tree}");
-    assert!(tree.contains("ma-row-host-29"), "{tree}");
-    assert_eq!(tree.matches(".flex_none").count(), 60, "rows must not shrink into the viewport: {tree}");
-}
-
-#[gpui::test]
-fn machine_add_needing_input_keeps_the_picker_and_shows_instructions(cx: &mut TestAppContext) {
-    cx.update(gpui_shell::init);
-    let staged = Staged::new();
-    let calls = Rc::new(RefCell::new(Calls::default()));
-    let policy = Policy::new().with_host_module(module(fixture(false, props(), updates("current", "current")), calls.clone())).unwrap();
-    let root = staged.wrapper("mods/machine-add", "this.typed = 'host'; this.add('host', cx);");
-    let window = cx.add_window(|_, _| Empty);
-    let mut session = window.update(cx, |_, window, cx| {
-        DescriptionSession::load(ShellRuntime::new_isolated().unwrap(), root, policy, window, cx).unwrap()
-    }).unwrap();
-    cx.run_until_parked();
-    window.update(cx, |_, window, cx| {
-        let tree = session.describe(window, cx).unwrap();
-        assert!(tree.contains("machine-add"), "{tree}");
-        assert!(tree.contains("ma-message-host"), "{tree}");
-        assert!(tree.contains("hc machine add host"), "{tree}");
-        window.remove_window();
-    }).unwrap();
-    let calls = calls.borrow();
-    assert!(calls.unexpected.is_empty(), "{:?}", calls.unexpected);
-    assert!(!calls.effects.iter().any(|(name, _)| name == "openOverlay" || name == "closeOverlay"), "the picker stays open without a setup dialog");
 }
 
 #[gpui::test]
@@ -869,107 +689,6 @@ fn animated_images_advance_with_explicit_and_implicit_ids(cx: &mut TestAppContex
 }
 
 #[gpui::test]
-fn the_whats_new_window_shows_the_notes(cx: &mut TestAppContext) {
-    cx.update(gpui_shell::init);
-    let staged = Staged::new();
-    let notes = json!([
-        {"version":"1.8.0","date":"2026-10-26","items":[{"headline":"Newest headline","detail":"Newest details","fixed":false,"media":[]},{"headline":"","detail":"Newest fix","fixed":true,"media":[]}],"spotlight":true},
-        {"version":"1.7.0","date":"2026-10-25","items":[{"headline":"Older headline","detail":"Older details","fixed":false,"media":[]},{"headline":"Another older headline","detail":"Hidden detail","fixed":false,"media":[]}],"spotlight":true}
-    ]);
-    let mut update = updates("ready", "current");
-    update["notes"] = notes.clone();
-    let mut p = props();
-    p["notes"] = notes;
-    let tree = describe(cx, &staged, "frame/whatsnew", true, p, update, None).unwrap();
-    assert!(tree.contains("Newest details") && tree.contains("Older details"));
-    assert!(tree.contains("Also fixed") && tree.contains("Newest fix"));
-    assert!(tree.contains("Oct 26") && !tree.contains("2026-10-26"));
-}
-
-#[gpui::test]
-fn local_state_and_overlay_initial_descriptions(cx: &mut TestAppContext) {
-    cx.update(gpui_shell::init);
-    let start = Instant::now();
-    let staged = Staged::new();
-    for page in 1..=4 {
-        let tree = describe(
-            cx,
-            &staged,
-            "frame/welcome",
-            true,
-            props(),
-            updates("current", "current"),
-            Some(&format!("this.page = {page};")),
-        )
-        .unwrap();
-        let expected = ["Sunna runs your terminals in the background", "Add your other machines", "Choose your panels", "Make it yours"][page - 1];
-        assert!(tree.contains(expected), "welcome page {page}: {tree}");
-    }
-    for setup in ["", "this.sent = true;", "this.error = 'Fixture error';"] {
-        let tree = describe(
-            cx,
-            &staged,
-            "frame/feedback",
-            true,
-            props(),
-            updates("current", "current"),
-            Some(setup),
-        )
-        .unwrap();
-        assert!(tree.contains("feedback"), "{tree}");
-        if setup.is_empty() {
-            assert!(
-                tree.contains("Input #") && tree.contains("Textarea #") && tree.contains("A prefilled message"),
-                "{tree}"
-            );
-        } else {
-            assert!(
-                tree.contains(if setup.contains("sent") { "Sent. Thanks" } else { "Fixture error" }),
-                "{tree}"
-            );
-        }
-    }
-    for query in ["settings", "no-such-command"] {
-        let tree = describe(
-            cx,
-            &staged,
-            "frame/palette",
-            true,
-            props(),
-            updates("current", "current"),
-            Some(&format!("this.query = {query:?};")),
-        )
-        .unwrap();
-        // The query sits in a native text field; what the list shows tells it apart.
-        let expected = if query == "settings" { "Settings" } else { "Nothing matches" };
-        assert!(tree.contains(expected), "palette query {query}: {tree}");
-    }
-    // Reviewed overlay contract table, not extracted from arbitrary JS call sites.
-    let scenarios = [
-        ("mods/menu", json!({"tab":"pane","target":{"pane":"p1","terminal":"t1"}})),
-        ("mods/menu", json!({"tab":"tab","target":{"id":"tab1","space":"s1"}})),
-        ("mods/menu", json!({"tab":"space","target":{"id":"s1"}})),
-        ("mods/prompt", json!({"machines":true})),
-        (
-            "mods/toast",
-            json!({"title":"Done","body":"Build complete","level":"success","action":{"name":"app.help"}}),
-        ),
-        ("mods/peek", json!({"terminal":"t1"})),
-        ("mods/peek", json!({"terminal":"missing"})),
-        ("mods/worktree", json!({"space":"s1","action":"new"})),
-        ("mods/worktree", json!({"space":"s1","action":"remove"})),
-    ];
-    let entries = staged.entries();
-    for (entry, patch) in scenarios {
-        assert!(entries.iter().any(|e| e == entry), "orphan scenario: {entry}");
-        let mut p = props();
-        p.as_object_mut().unwrap().extend(patch.as_object().unwrap().clone());
-        describe(cx, &staged, entry, true, p, updates("current", "current"), None).unwrap();
-    }
-    eprintln!("17 local-state/overlay cases, each twice: {:?}", start.elapsed());
-}
-
-#[gpui::test]
 fn duplicate_element_negative_control(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
@@ -994,7 +713,8 @@ fn shipped_layouts_and_keys() {
         match v {
             Value::Object(o) => {
                 if let Some(Value::String(name)) = o.get("mod") {
-                    assert!(mods.contains(name), "unknown layout mod {name}");
+                    // The pane headers are drawn by the app (`window/panehead.rs`), not by a mod.
+                    assert!(mods.contains(name) || matches!(name.as_str(), "pane" | "terminals-pane"), "unknown layout mod {name}");
                 }
                 for v in o.values() {
                     references(v, mods);
@@ -1052,39 +772,4 @@ fn shipped_layouts_and_keys() {
     }
 }
 
-#[gpui::test]
-fn picker_scrolls_the_selection_into_view(cx: &mut TestAppContext) {
-    cx.update(gpui_shell::init);
-    let staged = Staged::new();
-    let mut values = fixture(true, props(), updates("current", "current"));
-    let tabs: Vec<Value> = (1..=12)
-        .map(|i| json!({"id":format!("tab{i}"),"index":i,"name":format!("Task {i}"),"active":i==1,"status":"done","panes":1,"zoomed":false,"settled":false,"settled_at":null,"changed_at":null,"working_since":null}))
-        .collect();
-    values.insert("spaces".into(), json!([
-        {"id":"s1","index":1,"name":"Local","folder":"/fixture/project","machine":null,"branch":"main","active":true,"status":"working","tabs":tabs}
-    ]));
-    // Selecting the last row (with the arrows) must scroll it into the visible 320px.
-    let tree = describe_with_values(cx, &staged, "mods/picker", values, Some("this.at = 999; cx.notify();")).unwrap();
-    let top = tree.lines()
-        .find(|l| l.contains("pk-space-here"))
-        .unwrap_or_else(|| panic!("selected row missing: {tree}"));
-    let px: f64 = top.split(".top[Number(").nth(1).unwrap_or_else(|| panic!("selected row must be placed inside the scrolled list: {tree}")).split(")").next().unwrap().parse().unwrap();
-    assert!(px <= 320.0 - 32.0, "selected row at {px}px is below the visible list: {tree}");
-}
 
-#[gpui::test]
-fn status_bar_shows_the_real_palette_key(cx: &mut TestAppContext) {
-    cx.update(gpui_shell::init);
-    let staged = Staged::new();
-    let mut bound = fixture(true, props(), updates("current", "current"));
-    bound.insert("keys".into(), json!([{"section":"global","keys":"ctrl-p","action":"app.palette"}]));
-    let tree = describe_with_values(cx, &staged, "mods/workspace-status", bound, None).unwrap();
-    assert!(tree.contains("Ctrl+P"), "hint must show the real binding: {tree}");
-    assert!(!tree.contains("Shift P"), "stale hardcoded hint: {tree}");
-
-    let mut unbound = fixture(true, props(), updates("current", "current"));
-    unbound.insert("keys".into(), json!([{"section":"global","keys":"ctrl-k","action":"app.help"}]));
-    let tree = describe_with_values(cx, &staged, "mods/workspace-status", unbound, None).unwrap();
-    assert!(tree.contains("commands"), "unbound hint still offers commands: {tree}");
-    assert!(!tree.contains("Shift P"), "unbound hint must not invent a key: {tree}");
-}

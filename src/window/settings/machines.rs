@@ -232,7 +232,7 @@ impl SettingsView {
                 Action::Rename => "settings.renaming",
                 Action::Remove => "settings.removing",
             };
-            controls_row = controls_row.child(div().text_size(z(12.5)).text_color(c("working")).child(i18n::t(label)));
+            controls_row = controls_row.child(div().text_size(z(12.5)).text_color(tone("working")).child(i18n::t(label)));
         } else {
             if m["version"].as_str().is_some_and(|v| older_core(v, local)) {
                 let n = name.clone();
@@ -286,7 +286,7 @@ impl SettingsView {
                             .flex_col()
                             .gap(z(3.0))
                             .child(div().text_size(z(14.0)).text_color(c("foreground")).child(name.clone()))
-                            .child(div().text_size(z(12.5)).text_color(c("dim")).child(about)),
+                            .child(div().text_size(z(12.5)).text_color(tone("dim")).child(about)),
                     )
                     .child(controls_row),
             );
@@ -299,7 +299,7 @@ impl SettingsView {
                     .items_center()
                     .gap(z(8.0))
                     .text_size(z(12.5))
-                    .text_color(c("blocked"))
+                    .text_color(tone("blocked"))
                     .child(i18n::t("settings.agents_stop_when_you_disconnect"))
                     .child(button(format!("st-m-logout-fix-{name}"), i18n::t("settings.add_a_machine"), self.act(cx, |this, w, cx| this.run("mod.open", json!({ "name": "machine-add" }), w, cx)))),
             );
@@ -309,7 +309,7 @@ impl SettingsView {
             let copied = self.machines.copied.as_deref() == Some(command.as_str());
             let copy = command.clone();
             card = card
-                .child(div().text_size(z(12.5)).text_color(c("blocked")).child(i18n::t("settings.needs_a_login_run")))
+                .child(div().text_size(z(12.5)).text_color(tone("blocked")).child(i18n::t("settings.needs_a_login_run")))
                 .child(
                     div()
                         .flex()
@@ -328,7 +328,7 @@ impl SettingsView {
                 );
         }
         if busy == Some(Action::Update) {
-            card = card.child(div().text_size(z(12.5)).text_color(c("dim")).child(i18n::t("settings.copying_this_computer_s_herdr_core_its")));
+            card = card.child(div().text_size(z(12.5)).text_color(tone("dim")).child(i18n::t("settings.copying_this_computer_s_herdr_core_its")));
         }
         if busy.is_none() {
             let cancel = |this: &Self, cx: &mut Context<Self>, id: String| button(id, i18n::t("settings.cancel"), this.act(cx, |this, w, cx| {
@@ -339,7 +339,7 @@ impl SettingsView {
                 Some(Action::Remove) => {
                     let n = name.clone();
                     card = card
-                        .child(div().text_size(z(12.5)).text_color(c("muted")).child(i18n::tf("settings.remove_name_its_terminals_keep", &[("name", &name)])))
+                        .child(div().text_size(z(12.5)).text_color(tone("muted")).child(i18n::tf("settings.remove_name_its_terminals_keep", &[("name", &name)])))
                         .child(
                             div()
                                 .flex()
@@ -354,7 +354,7 @@ impl SettingsView {
                     let focused = self.machines.rename.read(cx).focus_handle(cx).is_focused(window);
                     let field = controls::field_ring(&self.machines.rename, 260.0, focused);
                     card = card
-                        .child(div().text_size(z(12.0)).text_color(c("dim")).child(i18n::t("settings.new_name_addresses_using_the")))
+                        .child(div().text_size(z(12.0)).text_color(tone("dim")).child(i18n::t("settings.new_name_addresses_using_the")))
                         .child(
                             div()
                                 .flex()

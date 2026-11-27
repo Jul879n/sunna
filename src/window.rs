@@ -6,10 +6,38 @@
 
 use crate::hc::Core;
 mod confirm;
+mod add_project;
+mod machine_add;
+mod dialog;
+mod prompt;
+mod palette;
+mod whatsnew;
+mod welcome_dialog;
+mod picker;
+mod feedback_dialog;
+mod ctxmenu;
+mod bots;
+mod cleanup;
+mod help;
+mod floatterm;
+mod panehead;
+mod peek;
+mod popmenus;
+mod quick;
+mod toast;
+mod changes;
 mod editor;
+mod activity;
+mod agents;
+mod files;
+mod search;
 mod floats;
 mod goto_file;
 mod movable;
+mod native;
+use native::{graphic, on_accent, tone};
+mod spaces;
+mod tabs;
 mod layout_edit;
 mod pane_drag;
 mod pane_size;
@@ -240,7 +268,8 @@ fn missing_mods(name: &str) -> Vec<String> {
     walk(&layout, &mut used);
     used.sort();
     used.dedup();
-    used.retain(|m| !m.starts_with("frame-") && !mods::mods_dir().join(m).is_dir());
+    // A shipped mod that went native is not missing: the layout block still works (`layout::native_alias`).
+    used.retain(|m| !m.starts_with("frame-") && !mods::mods_dir().join(m).is_dir() && crate::layout::native_alias(m, &Value::Null).is_none() && panehead::style_of(m).is_none());
     used
 }
 
@@ -339,6 +368,8 @@ struct Overlay {
     /// As designed; drawn at the current zoom. Up to 1: a share of the window.
     size: Size<f32>,
     expires: Option<Instant>,
+    /// A toast's time on screen, counted from when it appears (`toast::start_toasts`).
+    ttl: Option<Duration>,
     focus: FocusHandle,
     /// Blocks instead of one mod (terminals too), ids prefixed with the overlay's.
     layout: Option<Node>,
@@ -358,6 +389,8 @@ struct Overlay {
     frame: bool,
     /// A native view instead of a mod (the Settings window, settings_ui).
     view: Option<AnyView>,
+    /// Where the keyboard stood in a native view when it opened: its first field or its default button.
+    initial: Option<FocusHandle>,
 }
 
 struct Drag {
@@ -475,10 +508,14 @@ pub struct AppWindow {
     /// A terminal block in a window (an overlay's layout) holding the keyboard.
     /// `focused()` reports it like a layout terminal block; the focused pane stays.
     window_terminal: Option<String>,
+    /// The floating terminal's session (`floatterm.rs`).
+    float_term: Option<String>,
     /// Whether the last sync showed the tab, to hand it the keyboard back when a stack shows it again.
     tab_shown: bool,
     pane_history: Vec<String>,
     window_active: bool,
+    /// Whether the window is full screen (the top bar's brand leaves room for the macOS buttons otherwise); set each render.
+    fullscreen: bool,
     /// The system's appearance; a layout with a light and a dark theme follows it.
     system_dark: bool,
     /// The OS tells us when files change (`files.rs`); else the disk is polled.
@@ -506,6 +543,8 @@ pub struct AppWindow {
     editor_goto: HashMap<String, usize>,
     /// Checks open files against the disk now and then.
     editor_poll: Option<Task<()>>,
+    /// The Files and Changes panels, once a layout block asks for them (native.rs).
+    side: native::Side,
 }
 
 impl AppWindow {
@@ -594,9 +633,11 @@ impl AppWindow {
             focused_block: None,
             synced_model_pane: None,
             window_terminal: None,
+            float_term: None,
             tab_shown: true,
             pane_history: Vec::new(),
             window_active: true,
+            fullscreen: false,
             system_dark: is_dark(window.appearance()),
             file_events,
             polls: 0,
@@ -614,6 +655,7 @@ impl AppWindow {
             save_close: None,
             editor_goto: HashMap::new(),
             editor_poll: None,
+            side: Default::default(),
         };
         w._focus_lost = Some(cx.on_focus_lost(window, |this, window, cx| this.restore_focus(window, cx)));
         w._place = Some(cx.observe_window_bounds(window, |this, window, cx| {
@@ -827,6 +869,13 @@ impl AppWindow {
                 }
             }
         }));
+        // The bots' scheduler: each minute every switched-on bot is looked at (see bots.rs).
+        w._tasks.push(cx.spawn_in(window, async move |this, cx| loop {
+            cx.background_executor().timer(Duration::from_secs(60)).await;
+            if this.update_in(cx, |this, window, cx| this.bots_tick(window, cx)).is_err() {
+                break;
+            }
+        }));
         Self::note_core(&w.core);
         w.sync(window, cx);
         w.restore_focus(window, cx);
@@ -886,18 +935,11 @@ impl AppWindow {
             self.run("app.settings", json!({ "section": "updates" }), window, cx);
             return;
         }
-        let viewport = window.viewport_size();
-        let width = 880.0_f32.min((f32::from(viewport.width) / settings::zoom() - 24.0).max(1.0));
-        let height = 760.0_f32.min((f32::from(viewport.height) / settings::zoom() - 24.0).max(1.0));
-        let spec = json!({ "mod": "frame-whatsnew", "kind": "window", "width": width, "height": height, "props": { "notes": notes } });
-        self.open_overlay(mods::new_overlay_id(), spec, window, cx);
+        self.show_whats_new(notes, window, cx);
     }
 
     fn open_welcome(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // A window over the live app (nothing dims), centered and movable:
-        // each step changes what's behind it, and a click beside it doesn't end it.
-        let spec = json!({ "mod": "frame-welcome", "kind": "window", "width": 660, "height": 600 });
-        self.open_overlay(mods::new_overlay_id(), spec, window, cx);
+        self.show_welcome(window, cx);
     }
 
     /// Tells the updater which core this is and who owns it (off the UI thread).
@@ -1272,7 +1314,7 @@ impl AppWindow {
         let mut mods = Vec::new();
         let visit = |n: &Node, terms: &mut Vec<(String, String)>, mods: &mut Vec<(String, Instance)>| match n.content() {
             Some(Content::Terminal { terminal }) => terms.push((n.id.clone(), terminal.clone())),
-            Some(Content::Mod { name, props }) if name != editor::NAME => mods.push((n.id.clone(), Instance { name: name.clone(), props: props.clone() })),
+            Some(c @ Content::Mod { name, props }) if name != editor::NAME && !self.is_native(c) => mods.push((n.id.clone(), Instance { name: name.clone(), props: props.clone() })),
             _ => {}
         };
         let stacks = |root: &Node, mods: &mut Vec<(String, Instance)>| {
@@ -1308,8 +1350,8 @@ impl AppWindow {
             && let Some(c) = self.model.active_tab()
         {
             let header = self.pane_frame().and_then(|f| f.header).and_then(|h| match &h.content {
-                HeaderContent::Mod { name, props } => Some((name.clone(), props.clone())),
-                HeaderContent::Builtin(_) => None,
+                HeaderContent::Mod { name, props } if self.native_pane_header_of(name).is_none() => Some((name.clone(), props.clone())),
+                _ => None,
             });
             for n in c.shown().visible_blocks() {
                 if let Some((name, props)) = &header
@@ -1342,7 +1384,8 @@ impl AppWindow {
     /// The `welcome` mod fills the main area while no space is open.
     fn welcome_mod(&self) -> Option<(String, Instance)> {
         let loading = self.documents.get("").is_some_and(|s| s.layout() == "loading");
-        wants_welcome(self.shows_tab(), self.model.active_tab().is_some(), loading).then(|| (WELCOME.to_owned(), Instance { name: WELCOME.to_owned(), props: json!({}) }))
+        // The empty state is native; a `welcome` mod folder the person keeps still replaces it.
+        (self.folders.contains_key(WELCOME) && wants_welcome(self.shows_tab(), self.model.active_tab().is_some(), loading)).then(|| (WELCOME.to_owned(), Instance { name: WELCOME.to_owned(), props: json!({}) }))
     }
 
     /// Mod slots whose copy may stay alive: every one in the layout (hidden
@@ -1352,8 +1395,9 @@ impl AppWindow {
         let mut out = HashMap::new();
         let inst = |name: &String, props: &Value| Instance { name: name.clone(), props: props.clone() };
         for n in self.chrome.walk() {
-            if let Some(Content::Mod { name, props }) = n.content()
+            if let Some(c @ Content::Mod { name, props }) = n.content()
                 && name != editor::NAME
+                && !self.is_native(c)
             {
                 out.insert(n.id.clone(), inst(name, props));
             }
@@ -1379,8 +1423,8 @@ impl AppWindow {
                 _ => None,
             })
             .and_then(|h| match &h.content {
-                HeaderContent::Mod { name, props } => Some((name.clone(), props.clone())),
-                HeaderContent::Builtin(_) => None,
+                HeaderContent::Mod { name, props } if self.native_pane_header_of(name).is_none() => Some((name.clone(), props.clone())),
+                _ => None,
             });
         for c in self.model.tabs() {
             for n in c.root.walk() {
@@ -1570,6 +1614,7 @@ impl AppWindow {
                     let spec = json!({"kind":"toast", "notification":{"title":title, "body":body, "level":"error"}});
                     this.open_overlay(mods::new_overlay_id(), spec, window, cx)
                 }
+                TerminalEvent::Bell => this.bell(&block, &addr, window, cx),
             });
             let focus = view.read(cx).focus_handle().clone();
             if let Some(previous) = self.terms.insert(id, Term { view, address, focus, _sub: sub }) {
@@ -1711,7 +1756,15 @@ impl AppWindow {
     /// reload), it goes to the top dialog, else the shown agent or focused pane,
     /// else the window, where the app's keys work.
     fn restore_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let dialog = self.overlays.iter().rev().find(|o| o.kind.modal_keys()).map(|o| o.focus.clone());
+        // The dialog keeps the keyboard where it already is; when it is nowhere in it (the menu it was opened from
+        // just closed) it goes to the dialog's first stop, not to the frame around it (nothing there takes keys).
+        let dialog = self.overlays.iter().rev().find(|o| o.kind.modal_keys()).map(|o| {
+            if o.focus.contains_focused(window, cx) {
+                window.focused(cx).unwrap_or_else(|| o.focus.clone())
+            } else {
+                o.initial.clone().unwrap_or_else(|| o.focus.clone())
+            }
+        });
         // A mod block holding the keyboard gets it back (a popup over it closed).
         if dialog.is_none() && self.focused_block.as_ref().is_some_and(|b| self.mod_block_shown(b)) {
             self.focus.focus(window, cx);
@@ -2239,10 +2292,12 @@ impl AppWindow {
             let word = rec.get("status").and_then(Value::as_str).map(str::to_owned);
             let app = rec.get("report").and_then(|r| r.get("app")).and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_owned);
             let looking = visible.contains(addr) && self.window_active;
+            // What is in front needs no alert, unless the person asked to hear it anyway.
+            let in_front = looking && settings::get().notifications.suppress_when_focused;
             let prev = self.model.agents.get(addr).and_then(|a| a.word.clone());
             let child = rec.get("parent").and_then(Value::as_str).is_some_and(|p| !p.is_empty());
-            if let Some(alert) = self.model.alert_for(addr, child, prev.as_deref(), word.as_deref(), looking) {
-                alerts.push((addr.clone(), alert, looking));
+            if let Some(alert) = self.model.alert_for(addr, child, prev.as_deref(), word.as_deref(), in_front) {
+                alerts.push((addr.clone(), alert, in_front));
             }
             changed |= self.model.set_word(addr, word, app, looking);
             let turn = rec.get("turn").and_then(Value::as_u64).unwrap_or(0);
@@ -2405,6 +2460,25 @@ impl AppWindow {
         let notification = json!({
             "title": title, "body": place, "level": level,
             "action": { "name": "agent.focus", "args": { "terminal": addr } },
+        });
+        self.open_overlay(mods::new_overlay_id(), json!({ "kind": "toast", "notification": notification }), window, cx);
+    }
+
+    /// A terminal rang its bell: the "needs you" sound and a toast that goes there, when the
+    /// person asked for it and isn't already looking at that terminal.
+    fn bell(&mut self, pane: &str, addr: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let looking = self.visible_addresses().iter().any(|a| a == addr) && self.window_active;
+        let notifications = settings::get().notifications.clone();
+        if !notifications.rings_for_bell(looking) {
+            return;
+        }
+        if settings::get().sounds.enabled {
+            crate::sound::play("blocked");
+        }
+        let place = self.model.tab_of(pane.trim_end_matches(SWAP)).zip(self.model.space_of(pane.trim_end_matches(SWAP))).map(|(c, p)| format!("{} / {}", self.model.space_name(p, &home()), Model::tab_name(p, c)));
+        let notification = json!({
+            "title": crate::i18n::t("rs.window.terminal_bell"), "body": place, "level": "info",
+            "action": { "name": "pane.focus", "args": { "terminal": addr } },
         });
         self.open_overlay(mods::new_overlay_id(), json!({ "kind": "toast", "notification": notification }), window, cx);
     }
@@ -2660,7 +2734,7 @@ impl AppWindow {
     /// empty `cwd`: the machine's home. With no argv, that machine's core
     /// picks its own shell.
     fn spawn(&mut self, argv: Option<Vec<String>>, cwd: String, follow: bool, space: &str, ctx: &str, on: Option<&str>, size: Option<(u16, u16)>, window: &Window) -> Result<(String, String), String> {
-        let argv = argv.unwrap_or_default();
+        let argv = start_argv(argv, on, settings::get().shell.as_deref());
         self.require_document(on)?;
         let labels = json!({ "herdr.space": crate::mirror::local(space, on), "herdr.tab": crate::mirror::local(ctx, on), "herdr.seen": "0" });
         let (addr, cwd) = run_following_folder(cwd, follow, on, |cwd| match self.core.run(argv.clone(), cwd.clone(), labels.clone(), on, size, crate::terminal::initial_display(window)) {
@@ -2963,6 +3037,11 @@ impl AppWindow {
     /// Kills terminals and their sub-agents, all the way down. Core keeps a
     /// sub-agent running when its parent dies; closing one here means done with
     /// its whole tree. Kept sub-agents (given a tab) are the person's: spared.
+    /// Whether a program runs in any of these panes' terminals (an agent working, or a command in front of the shell).
+    fn panes_running(&self, panes: &[String]) -> bool {
+        panes.iter().filter_map(|p| self.model.address_of(p)).any(|addr| self.live.get(&addr).is_some_and(busy))
+    }
+
     fn kill(&mut self, addresses: &[String], cx: &mut Context<Self>) {
         let mut doomed: Vec<String> = addresses.to_vec();
         let mut i = 0;
@@ -3117,7 +3196,7 @@ impl AppWindow {
         {
             return json!({ "error": "a terminal layout block is focused, not a pane; focus a pane or pass an explicit pane id" });
         }
-        if person && name.ends_with(".rename") && args.get("name").is_none_or(Value::is_null) {
+        if person && matches!(name, "space.rename" | "tab.rename" | "machine.rename" | "group.new" | "group.rename") && args.get("name").is_none_or(Value::is_null) {
             self.ask_name(name, args, window, cx);
             return json!({ "asked": "name" });
         }
@@ -3162,6 +3241,15 @@ impl AppWindow {
                 let current = id.as_deref().and_then(|i| self.model.space(i)).map(|p| p.name.clone());
                 args["id"] = json!(id);
                 (crate::i18n::t("rs.window.rename_space"), crate::i18n::t("rs.window.empty_named_after_its_folder"), current)
+            }
+            "machine.rename" => {
+                let machine = Self::owned(&args, "machine").unwrap_or_default();
+                (crate::i18n::t("ctx.rename_machine_title"), String::new(), Some(machine))
+            }
+            "group.new" => (crate::i18n::t("groups.new_title"), String::new(), Some(spaces::default_group_name(&Self::owned(&args, "key").unwrap_or_default()))),
+            "group.rename" => {
+                let id = Self::owned(&args, "id").unwrap_or_default();
+                (crate::i18n::t("groups.rename_title"), String::new(), spaces::group_name(&id))
             }
             _ => {
                 let id = Self::owned(&args, "id").or_else(|| self.model.active_tab().map(|c| c.id.clone()));
@@ -3260,14 +3348,32 @@ impl AppWindow {
                     return;
                 }
                 let Some(p) = self.model.space_of(&id) else { return };
-                // The last tab takes its space with it: ask like closing the space.
-                if p.tabs.len() == 1 {
-                    let mut args = json!({ "id": p.id });
-                    args["confirmed"] = a.get("confirmed").cloned().unwrap_or(Value::Null);
-                    return self.dispatch("space.close", &args, person, window, cx);
+                let confirmed = a.get("confirmed").and_then(Value::as_bool) == Some(true);
+                let (space, tabs) = (p.id.clone(), p.tabs.len());
+                match closing(tabs, person, confirmed, self.panes_running(&panes), settings::get().confirm_close_running) {
+                    Closing::Ask => {
+                        let detail = crate::i18n::t("rs.window.close_running_detail");
+                        self.confirm(&crate::i18n::t("rs.window.close_running"), &detail, "tab.close", json!({ "id": id, "confirmed": true }), window, cx);
+                    }
+                    // A script closing the last tab closes the space: ask like closing the space.
+                    Closing::EndSpace => {
+                        let mut args = json!({ "id": space });
+                        args["confirmed"] = a.get("confirmed").cloned().unwrap_or(Value::Null);
+                        return self.dispatch("space.close", &args, person, window, cx);
+                    }
+                    // ⌘W on the last tab: the space stays, with a new terminal in place of it.
+                    Closing::Fresh => {
+                        if let Err(e) = self.new_tab(Some(space), "", None, None, None, true, window) {
+                            return self.fail(e);
+                        }
+                        let (addrs, _) = self.model.remove_tab(&id);
+                        self.kill(&addrs, cx);
+                    }
+                    Closing::Remove => {
+                        let (addrs, _) = self.model.remove_tab(&id);
+                        self.kill(&addrs, cx);
+                    }
                 }
-                let (addrs, _) = self.model.remove_tab(&id);
-                self.kill(&addrs, cx);
             }
             "tab.rename" => {
                 let Some(id) = Self::owned(a, "id").or(active_ctx) else { return self.fail("no tab to rename") };
@@ -3332,12 +3438,17 @@ impl AppWindow {
                     return;
                 }
                 let last = (c.root.panes().len() == 1).then(|| c.id.clone());
-                if self.ask_unsaved("pane.close", json!({ "pane": pane }), Some(&[pane.clone()]), a, person, window, cx) {
+                if self.ask_unsaved("pane.close", json!({ "pane": pane }), Some(std::slice::from_ref(&pane)), a, person, window, cx) {
                     return;
                 }
                 if let Some(id) = last {
                     let confirmed = a.get("confirmed").cloned().unwrap_or(Value::Null);
                     return self.dispatch("tab.close", &json!({ "id": id, "confirmed": confirmed }), person, window, cx);
+                }
+                if person && settings::get().confirm_close_running && a.get("confirmed").and_then(Value::as_bool) != Some(true) && self.panes_running(std::slice::from_ref(&pane)) {
+                    let detail = crate::i18n::t("rs.window.close_running_detail");
+                    self.confirm(&crate::i18n::t("rs.window.close_running"), &detail, "pane.close", json!({ "pane": pane, "confirmed": true }), window, cx);
+                    return;
                 }
                 let addr = self.model.address_of(&pane);
                 self.model.remove_pane(&pane);
@@ -3702,6 +3813,22 @@ impl AppWindow {
                     self.toggle_goto_file(window, cx);
                     return;
                 }
+                // These shipped mods are native now (Add machine, Add project, new worktree, prompt); the names still open them.
+                // The selector and the folder search are native too.
+                if !self.folders.contains_key(name) && name == "picker" {
+                    return self.toggle_picker(window, cx);
+                }
+                // The folder search dialog is gone: `folders` opens the same folder picker as Add project > Browse.
+                if !self.folders.contains_key(name) && name == "folders" {
+                    if let Err(e) = self.project_add("browse", window, cx) {
+                        return self.fail(e);
+                    }
+                    return;
+                }
+                if !self.folders.contains_key(name) && matches!(name, "machine-add" | "add-project" | "worktree" | "prompt") {
+                    let spec = json!({ "mod": name, "props": a.get("props").cloned().unwrap_or(json!({})) });
+                    return self.open_overlay(format!("mod-{name}"), spec, window, cx);
+                }
                 let Some(f) = self.folders.get(name) else { return self.fail(format!("no mod folder {name:?}")) };
                 let mut spec = mod_overlay(&f.dir);
                 spec["mod"] = json!(name);
@@ -3714,13 +3841,65 @@ impl AppWindow {
                 }
             }
             "overlay.close" => {
-                let id = Self::owned(a, "id").or_else(|| self.overlays.iter().rev().find(|o| o.kind.modal_keys()).map(|o| o.id.clone()));
+                let id = Self::owned(a, "id").or_else(|| self.overlays.iter().rev().find(|o| o.kind.modal_keys()).map(|o| o.id.clone()))
+                    // No dialog or popup open: the oldest notification on screen (the keyboard's way to dismiss one).
+                    .or_else(|| self.overlays.iter().find(|o| o.kind == OverlayKind::Toast).map(|o| o.id.clone()));
                 if let Some(id) = id {
                     self.close_overlay(&id, window, cx);
                 }
                 return;
             }
             // ---- the app
+            "sidebar.focus" => {
+                self.focus_list(window, cx);
+                return;
+            }
+            "sidebar.collapse_all" | "sidebar.reveal_current" | "sidebar.view" | "sidebar.filter" | "space.status" | "space.pin" => {
+                if let Err(error) = self.sidebar_command(name, a) {
+                    return self.fail(error);
+                }
+                cx.notify();
+                return;
+            }
+            n if spaces::MENU_COMMANDS.contains(&n) || spaces::handles_group_command(n) => {
+                if let Err(error) = self.menu_command(n, a, person, window, cx) {
+                    return self.fail(error);
+                }
+                cx.notify();
+                return;
+            }
+            "cleanup.run" => {
+                self.cleanup_command(a, window, cx);
+                return;
+            }
+            n if bots::COMMANDS.contains(&n) => {
+                if let Err(error) = self.bot_command(n, a, window, cx) {
+                    return self.fail(error);
+                }
+                return;
+            }
+            n if popmenus::COMMANDS.contains(&n) => {
+                if let Err(error) = self.worktree_command(n, a, window, cx) {
+                    return self.fail(error);
+                }
+                return;
+            }
+            "project.add" => {
+                let folders: Vec<String> = a.get("folders").and_then(Value::as_array).map(|l| l.iter().filter_map(Value::as_str).filter(|f| !f.is_empty()).map(str::to_owned).collect()).unwrap_or_default();
+                if !folders.is_empty() {
+                    for folder in folders {
+                        self.run("space.new", json!({ "folder": folder }), window, cx);
+                    }
+                    return;
+                }
+                if !person {
+                    return self.fail("project.add opens dialogs for a person: a script adds a project with space.new {folder}");
+                }
+                if let Err(error) = self.project_add(Self::arg(a, "step").unwrap_or("menu"), window, cx) {
+                    return self.fail(error);
+                }
+                return;
+            }
             "app.welcome" => {
                 self.open_welcome(window, cx);
                 return;
@@ -3731,12 +3910,7 @@ impl AppWindow {
             }
             "app.palette" => {
                 // Once: a second press closes the palette instead of stacking another.
-                if self.overlays.iter().any(|o| o.id == "palette") {
-                    self.close_overlay("palette", window, cx);
-                } else {
-                    let spec = json!({ "mod": "frame-palette", "kind": "popup", "at": "top", "offset": 60, "width": 620, "height": 0.85 });
-                    self.open_overlay("palette".into(), spec, window, cx);
-                }
+                self.toggle_palette(window, cx);
                 return;
             }
             "app.feedback" => {
@@ -3744,10 +3918,7 @@ impl AppWindow {
                 if !matches!(from.as_str(), "person" | "agent") {
                     return self.fail("from must be person or agent");
                 }
-                // A window, not a dialog: the app stays usable behind it (copy an error, paste it in).
-                let spec = json!({ "mod": "frame-feedback", "kind": "window", "key": "feedback", "width": 680,
-                    "props": { "message": Self::owned(a, "message").unwrap_or_default(), "from": from, "layout": self.layout_name } });
-                self.open_overlay(mods::new_overlay_id(), spec, window, cx);
+                self.open_feedback(Self::owned(a, "message").unwrap_or_default(), from, window, cx);
                 return;
             }
             "app.settings" => {
@@ -3771,13 +3942,25 @@ impl AppWindow {
                 }
                 crate::update::update_core();
             }
-            "app.help" => {
-                if self.overlays.iter().any(|o| o.id == "help") {
-                    self.close_overlay("help", window, cx);
-                } else {
-                    let spec = json!({ "mod": "help", "kind": "dialog", "width": 640, "height": 520 });
-                    self.open_overlay("help".into(), spec, window, cx);
+            "terminal.float" => {
+                if let Err(e) = self.toggle_float_terminal(window, cx) {
+                    self.fail(e);
                 }
+                return;
+            }
+            "terminal.quick" | "quick.set" | "quick.edit" | "quick.delete" => {
+                if let Err(e) = self.quick_command(name, a, window, cx) {
+                    self.fail(e);
+                }
+                return;
+            }
+            "app.notify" => {
+                let note: serde_json::Map<String, Value> = ["title", "body", "level", "action", "timeout"].iter().filter_map(|k| a.get(*k).map(|v| ((*k).to_owned(), v.clone()))).collect();
+                self.open_overlay(mods::new_overlay_id(), json!({ "kind": "toast", "notification": note }), window, cx);
+                return;
+            }
+            "app.help" => {
+                self.toggle_help(window, cx);
                 return;
             }
             "app.reset" => self.reset(window, cx),
@@ -3944,30 +4127,20 @@ impl AppWindow {
         if let Some(p) = at {
             self.pointer = p;
         }
-        let requested = self.chrome.terminal_menu.as_deref().unwrap_or("menu");
-        let name = if self.folders.contains_key(requested) {
-            requested
-        } else {
-            tracing::warn!(mod_name = requested, "terminal menu mod not found; using menu");
-            "menu"
-        };
+        // The stock menus are native; a layout's own `terminal_menu` mod (kept as a folder) still wins.
+        let requested = self.chrome.terminal_menu.as_deref().filter(|n| self.folders.contains_key(*n));
+        let Some(name) = requested else { return self.open_native_menu(tab, &target, window, cx) };
         let defaults = self.folders.get(name).map(|f| mod_overlay(&f.dir)).unwrap_or_else(|| json!({}));
         let spec = terminal_menu_spec(name, &defaults, tab, target);
         self.open_overlay(mods::new_overlay_id(), spec, window, cx);
     }
 
-    /// The layout's notification mod (`"toast"` on the root), else the shipped `toast`.
-    fn toast_mod(&self) -> &str {
-        let requested = self.chrome.toast.as_deref().unwrap_or("toast");
-        if self.folders.contains_key(requested) {
-            requested
-        } else {
-            tracing::warn!(mod_name = requested, "toast mod not found; using toast");
-            "toast"
-        }
-    }
-
     fn open_overlay(&mut self, id: String, spec: Value, window: &mut Window, cx: &mut Context<Self>) {
+        // Notifications are native; a layout's own `"toast": "<mod>"` still draws them.
+        if spec.get("kind").and_then(Value::as_str) == Some("toast") && self.custom_toast_mod().is_none() {
+            let props = spec.get("notification").cloned().unwrap_or(Value::Null);
+            return self.open_toast(id, &props, window, cx);
+        }
         // The `confirm` and `goto-file` mods became native: a mod that still opens them by
         // name gets the native ones, unless the person keeps a mod folder of that name.
         match spec.get("mod").and_then(Value::as_str) {
@@ -3979,6 +4152,48 @@ impl AppWindow {
                 }
             }
             Some("goto-file") if !self.folders.contains_key("goto-file") => return self.toggle_goto_file(window, cx),
+            // The frame's palette is native; a mod that opens it by name gets the same one.
+            Some("frame-palette") => return self.toggle_palette(window, cx),
+            Some("picker") if !self.folders.contains_key("picker") => return self.toggle_picker(window, cx),
+            Some("folders") if !self.folders.contains_key("folders") => {
+                if let Err(e) = self.project_add("browse", window, cx) {
+                    tracing::warn!("openOverlay folders: {e}");
+                }
+                return;
+            }
+            Some("frame-feedback") => {
+                let props = spec.get("props").cloned().unwrap_or(json!({}));
+                let text = |k: &str, d: &str| props.get(k).and_then(Value::as_str).unwrap_or(d).to_owned();
+                return self.open_feedback(text("message", ""), text("from", "person"), window, cx);
+            }
+            Some("frame-welcome") => return self.show_welcome(window, cx),
+            Some("frame-whatsnew") => {
+                let notes = spec.get("props").and_then(|p| p.get("notes")).and_then(|n| serde_json::from_value(n.clone()).ok()).unwrap_or_default();
+                return self.show_whats_new(notes, window, cx);
+            }
+            Some("machine-add") if !self.folders.contains_key("machine-add") => return self.open_machine_add(window, cx),
+            // The pop-up menus and the keys list are native; a mod of the same name still wins.
+            Some("menu") if !self.folders.contains_key("menu") => {
+                let props = spec.get("props").cloned().unwrap_or(json!({}));
+                return self.open_native_menu(props.get("tab").and_then(Value::as_str).unwrap_or(""), &props.get("target").cloned().unwrap_or(json!({})), window, cx);
+            }
+            Some("new-menu") if !self.folders.contains_key("new-menu") => return self.open_new_menu(window, cx),
+            Some("awake-menu") if !self.folders.contains_key("awake-menu") => return self.open_awake_menu(window, cx),
+            Some("help") if !self.folders.contains_key("help") => return self.toggle_help(window, cx),
+            Some("worktree") if !self.folders.contains_key("worktree") => return self.open_worktree(spec.get("props").cloned().unwrap_or(json!({})), window, cx),
+            Some("add-project") if !self.folders.contains_key("add-project") => {
+                let step = spec.get("props").and_then(|p| p.get("step")).and_then(Value::as_str).unwrap_or("menu");
+                if let Err(e) = self.project_add(step, window, cx) {
+                    tracing::warn!("openOverlay add-project: {e}");
+                }
+                return;
+            }
+            Some("prompt") if !self.folders.contains_key("prompt") => {
+                return match prompt::Ask::from_props(spec.get("props").unwrap_or(&Value::Null)) {
+                    Some(ask) => self.open_prompt(id, ask, window, cx),
+                    None => tracing::warn!("openOverlay prompt needs props.command.name"),
+                };
+            }
             _ => {}
         }
         let kind = match spec.get("kind").and_then(Value::as_str) {
@@ -4004,7 +4219,7 @@ impl AppWindow {
             }
         });
         let (name, mut props) = if kind == OverlayKind::Toast {
-            (self.toast_mod().to_owned(), spec.get("notification").cloned().unwrap_or(Value::Null))
+            (self.custom_toast_mod().unwrap_or_default(), spec.get("notification").cloned().unwrap_or(Value::Null))
         } else {
             (spec.get("mod").and_then(Value::as_str).unwrap_or_default().to_owned(), spec.get("props").cloned().unwrap_or(json!({})))
         };
@@ -4058,6 +4273,7 @@ impl AppWindow {
             at,
             size,
             expires: (kind == OverlayKind::Toast).then(|| Instant::now() + Duration::from_millis(timeout as u64)),
+            ttl: None,
             focus,
             layout,
             top,
@@ -4068,6 +4284,7 @@ impl AppWindow {
             key: key.clone(),
             frame: spec.get("mod").and_then(Value::as_str).is_some_and(|m| m.starts_with("frame-")),
             view: None,
+            initial: None,
         });
         if let Some(k) = &key {
             if spec.get("keep").and_then(Value::as_bool) == Some(true) {
@@ -4127,6 +4344,9 @@ impl AppWindow {
     fn remove_overlay(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(i) = self.overlays.iter().position(|o| o.id == id) {
             let o = self.overlays.remove(i);
+            if o.view.is_some() {
+                dialog::forget_typed();
+            }
             if self.win_drag.as_ref().is_some_and(|d| d.id == o.id) {
                 self.win_drag = None;
             }
@@ -4143,7 +4363,9 @@ impl AppWindow {
             // `restore_focus` runs on its own when its focus goes).
             if o.kind.modal_keys() {
                 self.restore_focus(window, cx);
+                self.list_menu_closed(&o.id, window, cx);
             }
+            self.start_toasts();
             cx.notify();
         }
     }
@@ -4313,6 +4535,7 @@ impl AppWindow {
         for id in expired {
             self.close_overlay(&id, window, cx);
         }
+        self.start_toasts();
         let active = window.is_window_active();
         if active != self.window_active {
             self.window_active = active;
@@ -4572,8 +4795,15 @@ impl AppWindow {
         el = shadow(el, f.shadow.as_deref());
         let body = div().flex_1().min_h_0().flex().child(inner);
         let Some(h) = &f.header else { return el.child(body).into_any_element() };
-        let head = div().flex_none().h(settings::z(pane_size::header_height(h))).w_full().flex()
-            .child(self.render_slot(&format!("{}#frame", n.id), cx));
+        let native = match &h.content {
+            HeaderContent::Mod { name, .. } => self.native_pane_header_of(name),
+            HeaderContent::Builtin(_) => None,
+        };
+        let inner = match native {
+            Some(style) => self.native_pane_header(n, style, h.bottom(), cx),
+            None => self.render_slot(&format!("{}#frame", n.id), cx),
+        };
+        let head = div().flex_none().h(settings::z(pane_size::header_height(h))).w_full().flex().child(inner);
         if h.hover() {
             let head = head.absolute().left_0().right_0().opacity(0.).group_hover(group, |s| s.opacity(1.));
             let head = if h.bottom() { head.bottom_0() } else { head.top_0() };
@@ -4649,12 +4879,27 @@ impl AppWindow {
     }
 
     fn render_block(&self, n: &Node, content: &Content, focused: &HashSet<String>, cx: &mut Context<Self>) -> AnyElement {
+        if let Some((name, props)) = self.native_of(content) {
+            return self.render_native(&name, &props, cx);
+        }
         match content {
             Content::Terminal { .. } => match self.pane_term(&n.id) {
                 Some(t) => {
                     let id = n.id.clone();
+                    let prefs = settings::get();
+                    let split = self.model.tab_of(&n.id).is_some_and(|c| c.root.panes().len() > 1);
+                    let veil = veil_alpha(prefs.inactive_pane_opacity, split, focused.contains(&n.id));
+                    let hover_id = n.id.clone();
                     div()
                         .size_full()
+                        .relative()
+                        .when(prefs.focus_follows_mouse, |d| {
+                            d.on_mouse_move(cx.listener(move |this, ev: &MouseMoveEvent, window, cx| {
+                                if ev.pressed_button.is_none() {
+                                    this.follow_pointer(&hover_id, window, cx);
+                                }
+                            }))
+                        })
                         .on_any_mouse_down(cx.listener(move |this, _, _, cx| {
                             // Overlay terminals keep their own focus; chrome blocks share the pane focus API.
                             if this.focused_pane.as_deref() != Some(id.as_str())
@@ -4669,11 +4914,14 @@ impl AppWindow {
                             }
                         }))
                         .child(shown_terminal(&t.view, cx))
+                        // A pane without the keyboard fades toward its background; the veil lets every click through.
+                        .children(veil.map(|alpha| div().absolute().top_0().left_0().size_full().bg(crate::terminal::hsla(crate::vt::theme().bg).opacity(alpha))))
                         .into_any_element()
                 }
                 None => div().into_any_element(),
             },
             Content::Mod { name, .. } if name == editor::NAME => self.render_editor(&n.id, cx),
+            Content::Native { .. } => div().into_any_element(),
             Content::Mod { .. } => self.render_slot(&n.id, cx),
             Content::Agent { .. } => match self.shown_agent() {
                 Some(addr) => match self.agent_view(&n.id, &addr) {
@@ -4685,8 +4933,8 @@ impl AppWindow {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .text_color(c("dim"))
-                    .child("no agents yet. start claude, codex or pi in a terminal")
+                    .text_color(tone("dim"))
+                    .child(crate::i18n::t("rs.window.no_agents_yet"))
                     .into_any_element(),
             },
             Content::Context { .. } => match self.model.active_tab() {
@@ -4695,9 +4943,27 @@ impl AppWindow {
                     self.render_node(c.shown(), focused, frame.as_ref(), cx)
                 }
                 None if self.documents.get("").is_some_and(|s| s.layout() == "loading") => div().size_full().into_any_element(),
-                None => self.render_slot(WELCOME, cx),
+                None if self.folders.contains_key(WELCOME) => self.render_slot(WELCOME, cx),
+                None => self.render_native("welcome", &Value::Null, cx),
             },
         }
+    }
+
+    /// Focus follows the mouse: the pointer over a terminal pane gives it the keyboard
+    /// (not while a dialog or menu holds it).
+    fn follow_pointer(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self.focused_pane.as_deref() == Some(id) || self.model.tab_of(id).is_none() || self.overlays.iter().any(|o| o.kind.modal_keys()) {
+            return;
+        }
+        self.model.focus_pane(id);
+        self.focused_pane = Some(id.to_owned());
+        self.synced_model_pane = self.model.focused_pane();
+        if let Some(handle) = self.pane_focus(id, cx) {
+            handle.focus(window, cx);
+        }
+        self.publish(cx);
+        self.save();
+        cx.notify();
     }
 
     fn render_slot(&self, slot: &str, cx: &mut Context<Self>) -> AnyElement {
@@ -4740,7 +5006,7 @@ impl AppWindow {
                 .size_full()
                 .p_2()
                 .text_xs()
-                .text_color(c("blocked"))
+                .text_color(tone("blocked"))
                 .overflow_y_scroll()
                 .child(format!("{} did not load:\n\n{}\n\nFix the files; Herdr retries on save.", inst.name, error.as_deref().unwrap_or("?")))
                 .into_any_element(),
@@ -4874,8 +5140,18 @@ impl AppWindow {
         // Windows under dialogs, popups and toasts; each kind in the order opened
         // (a window pressed last is last: on top).
         let order = self.overlays.iter().filter(|o| o.kind == OverlayKind::Window).chain(self.overlays.iter().filter(|o| o.kind != OverlayKind::Window));
+        let mut toasts_shown = 0;
         for o in order {
+            if o.kind == OverlayKind::Toast {
+                // The others wait in the queue until one goes.
+                toasts_shown += 1;
+                if toasts_shown > toast::MAX_SHOWN {
+                    continue;
+                }
+            }
             let id = o.id.clone();
+            // A native dialog closes through its own close (`dialog::dismiss`), a mod's overlay is taken away.
+            let native = o.view.is_some();
             // Up to 1: a share of the window (terminals in overlays want room, not px).
             let span = |v: f32, full: Pixels| if v <= 1.0 { full * v } else { settings::z(v) };
             let (w, h) = (span(o.size.width, viewport.width), span(o.size.height, viewport.height));
@@ -4892,7 +5168,7 @@ impl AppWindow {
                 .when(o.layout.is_none() && o.kind.modal_keys(), |d| d.key_context("Overlay"))
                 .when(sized(o.size.width), |d| d.w(w))
                 .when(sized(o.size.height), |d| if o.fit { d.max_h(h) } else { d.h(h) })
-                .when(!o.bare, |d| d.bg(c("popover")).border_1().border_color(c("border")).rounded(settings::z(8.0)).shadow_lg())
+                .when(!o.bare, |d| d.bg(c("popover")).border_1().border_color(c("border")).rounded(settings::z(8.0)).when(!settings::get().reduce_effects, |d| d.shadow_lg()))
                 .overflow_hidden()
                 .flex()
                 // Scroll, hover and cursor stop here, not on the pane behind.
@@ -4905,12 +5181,17 @@ impl AppWindow {
                     div()
                         .absolute()
                         .inset_0()
-                        .bg(hsla(0.0, 0.0, 0.0, 0.35))
+                        .bg(dialog::scrim())
                         .occlude()
                         .flex()
                         .items_center()
                         .justify_center()
-                        .when(!o.modal, |d| d.on_mouse_down(MouseButton::Left, cx.listener(move |this, _, w, cx| this.close_overlay(&id, w, cx))))
+                        // A click outside closes it only while nothing is typed in it (`dialog::closes_on_outside_click`).
+                        .when(!o.modal, |d| d.on_mouse_down(MouseButton::Left, cx.listener(move |this, _, w, cx| {
+                            if dialog::closes_on_outside_click(dialog::typed()) {
+                                if native { dialog::dismiss(w, cx) } else { this.close_overlay(&id, w, cx) }
+                            }
+                        })))
                         .child(body)
                         .into_any_element(),
                 ),
@@ -4924,7 +5205,13 @@ impl AppWindow {
                         div()
                             .absolute()
                             .inset_0()
-                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, w, cx| this.close_overlay(&id, w, cx)))
+                            // A native dialog drawn as a popup (go to file) dims the window like the others.
+                            .when(o.bare && o.view.is_some(), |d| d.bg(dialog::scrim()))
+                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, w, cx| {
+                                if dialog::closes_on_outside_click(dialog::typed()) {
+                                    if native { dialog::dismiss(w, cx) } else { this.close_overlay(&id, w, cx) }
+                                }
+                            }))
                             .on_mouse_down(MouseButton::Right, cx.listener({
                                 let id = o.id.clone();
                                 move |this, _, w, cx| this.close_overlay(&id, w, cx)
@@ -4947,10 +5234,10 @@ impl AppWindow {
                 .occlude().flex().items_center().gap(settings::z(8.0))
                 .child(div().id("core-update-error").flex_1().min_w_0().cursor_pointer()
                     .on_click(cx.listener(|this, _, w, cx| this.run("app.settings", json!({ "section": "updates" }), w, cx)))
-                    .child(format!("herdr-core update failed: {error} · Open Updates")))
-                .child(div().id("core-update-error-dismiss").size(settings::z(24.0)).flex_none()
+                    .child(crate::i18n::tf("rs.window.core_update_failed", &[("error", error.as_str())])))
+                .child(div().id("core-update-error-dismiss").size(settings::z(32.0)).flex_none()
                     .flex().items_center().justify_center().rounded_full().cursor_pointer()
-                    .text_color(c("dim")).hover(|s| s.bg(c("raised")).text_color(c("foreground"))).child("×")
+                    .text_color(tone("dim")).hover(|s| s.bg(c("raised")).text_color(c("foreground"))).child("×")
                     .on_click(cx.listener(|this, _, w, cx| this.close_overlay("core-update-error", w, cx))))
                 .into_any_element());
         }
@@ -4959,7 +5246,7 @@ impl AppWindow {
     }
 }
 
-const UPDATE_PILL_HEIGHT: f32 = 34.0;
+const UPDATE_PILL_HEIGHT: f32 = 42.0;
 
 impl AppWindow {
     /// "Herdr 0.2.0 is ready · Restart": the frame's, so no layout or mod can hide it.
@@ -4968,9 +5255,9 @@ impl AppWindow {
         let core = crate::update::core();
         let core = core.ready.filter(|_| !core.updating && core.managed.is_none());
         match (crate::update::ready(), core) {
-            (Some(a), Some(c)) => Some(format!("Herdr {a} and herdr-core {c} are ready")),
-            (Some(a), None) => Some(format!("Herdr {a} is ready")),
-            (None, Some(c)) => Some(format!("herdr-core {c} is ready")),
+            (Some(a), Some(c)) => Some(crate::i18n::tf("rs.window.update_both_ready", &[("app", a.as_str()), ("core", c.as_str())])),
+            (Some(a), None) => Some(crate::i18n::tf("rs.window.update_app_ready", &[("app", a.as_str())])),
+            (None, Some(c)) => Some(crate::i18n::tf("rs.window.update_core_ready", &[("core", c.as_str())])),
             (None, None) => None,
         }
     }
@@ -4979,7 +5266,7 @@ impl AppWindow {
         let app_version = crate::update::ready();
         let app_ready = app_version.is_some();
         let success = self.update_ready.is_none() && self.update_success;
-        let label = self.update_ready.clone().or_else(|| success.then(|| format!("Updated to {}", env!("CARGO_PKG_VERSION"))))?;
+        let label = self.update_ready.clone().or_else(|| success.then(|| crate::i18n::tf("rs.window.update_done", &[("version", env!("CARGO_PKG_VERSION"))])))?;
         let dismissal = app_version.map(|v| format!("app:{v}")).unwrap_or_else(|| label.clone());
         if self.update_dismissed.as_ref() == Some(&dismissal) { return None; }
         let pill = div()
@@ -4996,28 +5283,28 @@ impl AppWindow {
             .border_1()
             .border_color(c("border"))
             .rounded_full()
-            .shadow_lg()
+            .when(!settings::get().reduce_effects, |d| d.shadow_lg())
             .occlude()
             .text_size(settings::z(13.0))
             .child(div().text_color(c("foreground")).child(label.clone()))
             .when(app_ready, |pill| pill.child(
                 div()
                     .id("update-restart")
-                    .h(settings::z(24.0))
+                    .h(settings::z(32.0))
                     .px(settings::z(10.0))
                     .flex()
                     .items_center()
                     .rounded_full()
                     .cursor_pointer()
                     .bg(c("accent"))
-                    .text_color(c("accent_foreground"))
+                    .text_color(on_accent())
                     .font_weight(FontWeight::SEMIBOLD)
                     .hover(|s| s.opacity(0.9))
-                    .child("Restart")
+                    .child(crate::i18n::t("rs.window.update_restart"))
                     .on_click(cx.listener(|this, _, w, cx| this.run("app.update", json!({}), w, cx))),
             ))
-            .child(div().id("update-notes").px(settings::z(6.0)).cursor_pointer().text_color(c("accent"))
-                .child(if app_ready || success { "What changed" } else { "Open Updates" })
+            .child(div().id("update-notes").h(settings::z(32.0)).flex().items_center().px(settings::z(8.0)).cursor_pointer().text_color(c("accent"))
+                .child(crate::i18n::t(if app_ready || success { "rs.window.update_what_changed" } else { "rs.window.update_open" }))
                 .on_click(cx.listener(move |this, _, w, cx| {
                     if success { this.update_success = false; }
                     this.run("app.settings", json!({ "section": "updates" }), w, cx);
@@ -5025,13 +5312,13 @@ impl AppWindow {
             .child(
                 div()
                     .id("update-dismiss")
-                    .size(settings::z(24.0))
+                    .size(settings::z(32.0))
                     .flex()
                     .items_center()
                     .justify_center()
                     .rounded_full()
                     .cursor_pointer()
-                    .text_color(c("dim"))
+                    .text_color(tone("dim"))
                     .hover(|s| s.bg(c("raised")).text_color(c("foreground")))
                     .child("×")
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -5107,6 +5394,48 @@ fn overlay_layout(mut n: Node, overlay: &str) -> Node {
     }
     walk(&mut n, overlay, &mut 0);
     n
+}
+
+/// How opaque a veil over a terminal pane is: only a pane without the keyboard in a split tab,
+/// and only when `inactive_pane_opacity` is below 1.
+fn veil_alpha(inactive_opacity: f32, split: bool, focused: bool) -> Option<f32> {
+    (split && !focused && inactive_opacity < 1.0).then_some(1.0 - inactive_opacity)
+}
+
+/// What a new terminal runs: the program asked for, else the person's `shell` (on this
+/// machine only: another machine has its own), else nothing, which is the core's login shell.
+fn start_argv(argv: Option<Vec<String>>, on: Option<&str>, shell: Option<&str>) -> Vec<String> {
+    match argv.filter(|a| !a.is_empty()) {
+        Some(a) => a,
+        None => shell.filter(|_| on.is_none()).map(|s| vec![s.to_owned()]).unwrap_or_default(),
+    }
+}
+
+/// What closing a tab does.
+#[derive(Debug, PartialEq, Eq)]
+enum Closing {
+    /// A program runs there and the person wants to be asked first.
+    Ask,
+    /// One of several tabs: just that one.
+    Remove,
+    /// The space's last tab, from a script: the space goes with it (as it always did).
+    EndSpace,
+    /// The space's last tab, from the person (⌘W): the space stays, with a fresh terminal.
+    Fresh,
+}
+
+/// The order of decisions of `tab.close`: ask (only a person is asked, only when it is wanted and
+/// something runs, and not again once `confirmed`), then by how many tabs the space has.
+fn closing(tabs: usize, person: bool, confirmed: bool, running: bool, ask_running: bool) -> Closing {
+    if person && ask_running && running && !confirmed {
+        Closing::Ask
+    } else if tabs > 1 {
+        Closing::Remove
+    } else if person {
+        Closing::Fresh
+    } else {
+        Closing::EndSpace
+    }
 }
 
 /// What a terminal's folder last said about its repo, and what ran there then.
@@ -5464,6 +5793,9 @@ fn paint(el: Div, bg: &Paint) -> Div {
 }
 
 fn shadow(el: Div, s: Option<&str>) -> Div {
+    if settings::get().reduce_effects {
+        return el;
+    }
     match s {
         Some("sm") => el.shadow_sm(),
         Some("md") => el.shadow_md(),
@@ -5475,6 +5807,13 @@ fn shadow(el: Div, s: Option<&str>) -> Div {
 /// How many files are edited and not saved.
 pub fn unsaved_files() -> usize {
     editor::UNSAVED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Which way a Tab press walks the controls (`true` = forward, Shift+Tab = back); `None` when the key is left alone:
+/// not a plain Tab, or `held` (a dialog, menu or terminal has the keyboard and handles Tab itself).
+fn tab_step(key: &Keystroke, held: bool) -> Option<bool> {
+    let m = &key.modifiers;
+    (key.key == "tab" && !held && !m.control && !m.alt && !m.platform).then_some(!m.shift)
 }
 
 /// No terminal view has the keyboard.
@@ -5529,6 +5868,12 @@ impl Render for AppWindow {
         self.tick_floats(window);
         self.apply_titlebar(window);
         self.apply_blur(window);
+        self.fullscreen = window.is_fullscreen();
+        self.sync_brand(window, cx);
+        self.sync_tabs(window, cx);
+        self.sync_spaces(window, cx);
+        self.sync_agents(window, cx);
+        self.sync_panels(window, cx);
         if mods::publish_window(self.window_json(window)) {
             self.refresh_snapshot_mods(cx);
         }
@@ -5589,6 +5934,14 @@ impl Render for AppWindow {
                 }
             }))
             .capture_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
+                // Tab and Shift+Tab walk the controls (sidebar, panels, notifications) once the keyboard is out of a
+                // terminal; dialogs and menus walk their own, and a terminal keeps its Tab.
+                let held = this.overlays.iter().any(|o| o.kind.modal_keys()) || this.terms.values().any(|t| t.focus.is_focused(window));
+                if let Some(forward) = tab_step(&ev.keystroke, held) {
+                    if forward { window.focus_next(cx) } else { window.focus_prev(cx) }
+                    cx.stop_propagation();
+                    return;
+                }
                 if ev.keystroke.key == "escape" {
                     if this.layout_edit {
                         // First Esc drops a drag in progress, the next leaves the mode.
@@ -5601,6 +5954,12 @@ impl Render for AppWindow {
                         this.cancel_pane_drag(cx);
                         cx.stop_propagation();
                     } else if cx.stop_active_drag(window) {
+                        cx.stop_propagation();
+                    } else if !held
+                        && let Some(id) = this.overlays.iter().find(|o| o.kind == OverlayKind::Toast).map(|o| o.id.clone())
+                    {
+                        // Esc outside a terminal, dialog or menu dismisses the oldest notification.
+                        this.close_overlay(&id, window, cx);
                         cx.stop_propagation();
                     }
                 }
@@ -5690,6 +6049,52 @@ fn reconcile_core_update_error(dismissed: &mut Option<String>, core: &crate::upd
 
 #[cfg(test)]
 mod tests {
+    use super::{Closing, closing, start_argv, veil_alpha};
+
+    #[test]
+    fn closing_a_tab_decides_in_this_order() {
+        // One of several tabs: just that one.
+        assert_eq!(closing(3, true, false, false, false), Closing::Remove);
+        // The last tab: a person (⌘W) keeps the space with a fresh terminal; a script ends the space, as before.
+        assert_eq!(closing(1, true, false, false, false), Closing::Fresh);
+        assert_eq!(closing(1, false, false, false, false), Closing::EndSpace);
+        // Asking comes first, only for a person, only when wanted and something runs, and once.
+        assert_eq!(closing(1, true, false, true, true), Closing::Ask);
+        assert_eq!(closing(3, true, false, true, true), Closing::Ask);
+        assert_eq!(closing(1, true, true, true, true), Closing::Fresh, "confirmed: no second question");
+        assert_eq!(closing(3, true, false, true, false), Closing::Remove, "not wanted");
+        assert_eq!(closing(3, true, false, false, true), Closing::Remove, "nothing runs");
+        assert_eq!(closing(1, false, false, true, true), Closing::EndSpace, "scripts are never asked here");
+    }
+
+    #[test]
+    fn a_new_terminal_runs_what_was_asked_else_the_persons_shell_here() {
+        let cmd = Some(vec!["claude".to_owned()]);
+        assert_eq!(start_argv(cmd.clone(), None, Some("/bin/zsh")), ["claude"]);
+        assert_eq!(start_argv(None, None, Some("/bin/zsh")), ["/bin/zsh"]);
+        assert_eq!(start_argv(Some(vec![]), None, Some("/bin/zsh")), ["/bin/zsh"]);
+        assert!(start_argv(None, None, None).is_empty(), "no setting: the core's login shell");
+        assert!(start_argv(None, Some("vps"), Some("/bin/zsh")).is_empty(), "another machine has its own");
+    }
+
+    #[test]
+    fn only_an_unfocused_pane_of_a_split_tab_fades() {
+        assert!((veil_alpha(0.6, true, false).unwrap() - 0.4).abs() < 1e-6);
+        assert_eq!(veil_alpha(0.6, true, true), None);
+        assert_eq!(veil_alpha(0.6, false, false), None, "a lone pane never fades");
+        assert_eq!(veil_alpha(1.0, true, false), None, "the default is no veil");
+    }
+    #[test]
+    fn tab_walks_the_controls_only_when_nothing_holds_the_keyboard() {
+        use gpui::Keystroke;
+        let k = |s: &str| Keystroke::parse(s).unwrap();
+        assert_eq!(super::tab_step(&k("tab"), false), Some(true));
+        assert_eq!(super::tab_step(&k("shift-tab"), false), Some(false));
+        assert_eq!(super::tab_step(&k("tab"), true), None);
+        assert_eq!(super::tab_step(&k("ctrl-tab"), false), None);
+        assert_eq!(super::tab_step(&k("cmd-tab"), false), None);
+        assert_eq!(super::tab_step(&k("enter"), false), None);
+    }
     #[test]
     fn welcome_only_with_no_space_open() {
         use super::wants_welcome;
@@ -7473,9 +7878,14 @@ export default class SystemToast extends View {
         assert!(seen.as_array().unwrap().contains(&json!("Build finished: All green")), "the mod got the notification's props: {seen}");
 
         view.update(cx, |this, _| this.chrome.toast = Some("no-such-mod".into()));
-        let (id, name) = notify(cx);
-        assert_eq!(name, "toast");
-        assert!(shown(&id, cx), "an unknown mod falls back to the shipped toast, which stays");
+        // An unknown mod falls back to the native toast, which stays on screen.
+        let id = view.update_in(cx, |this, window, cx| {
+            let id = crate::mods::new_overlay_id();
+            this.open_overlay(id.clone(), json!({ "kind": "toast", "notification": { "title": "Native", "body": "Still here" } }), window, cx);
+            assert!(!this.copies.contains_key(&format!("overlay:{id}")), "no mod copy draws the native toast");
+            id
+        });
+        assert!(shown(&id, cx), "an unknown mod falls back to the native toast, which stays");
     }
 
     #[test]
